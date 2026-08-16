@@ -433,7 +433,7 @@ static esp_err_t handle_reset_post(httpd_req_t *req)
 }
 
 /* ------------------------------------------------------------------ */
-/* Modbus 网关配置接口                                                  */
+/* Modbus TCP 从站配置接口                                              */
 /* ------------------------------------------------------------------ */
 
 static esp_err_t handle_gw_get(httpd_req_t *req)
@@ -444,20 +444,12 @@ static esp_err_t handle_gw_get(httpd_req_t *req)
     cJSON *obj = cJSON_CreateObject();
     cJSON_AddBoolToObject(obj, "enabled", cfg.enabled);
     cJSON_AddNumberToObject(obj, "port", cfg.port);
-    cJSON_AddNumberToObject(obj, "baud", cfg.baud);
-    cJSON_AddNumberToObject(obj, "tx", cfg.tx_gpio);
-    cJSON_AddNumberToObject(obj, "rx", cfg.rx_gpio);
     cJSON_AddStringToObject(obj, "client_ip", cfg.client_ip);
     cJSON_AddBoolToObject(obj, "tls_enabled", cfg.tls_enabled);
     cJSON_AddNumberToObject(obj, "tls_port", cfg.tls_port);
     esp_err_t ret = send_json_obj(req, obj);
     cJSON_Delete(obj);
     return ret;
-}
-
-static bool valid_gpio(int g)
-{
-    return g >= 0 && g <= 48;
 }
 
 static esp_err_t handle_gw_post(httpd_req_t *req)
@@ -485,18 +477,6 @@ static esp_err_t handle_gw_post(httpd_req_t *req)
     if (cJSON_IsNumber(j) && j->valueint >= 1 && j->valueint <= 65535) {
         cfg.port = j->valueint;
     }
-    j = cJSON_GetObjectItem(root, "baud");
-    if (cJSON_IsNumber(j) && j->valueint >= 300 && j->valueint <= 2000000) {
-        cfg.baud = j->valueint;
-    }
-    j = cJSON_GetObjectItem(root, "tx");
-    if (cJSON_IsNumber(j) && valid_gpio(j->valueint)) {
-        cfg.tx_gpio = j->valueint;
-    }
-    j = cJSON_GetObjectItem(root, "rx");
-    if (cJSON_IsNumber(j) && valid_gpio(j->valueint)) {
-        cfg.rx_gpio = j->valueint;
-    }
     j = cJSON_GetObjectItem(root, "client_ip");
     if (cJSON_IsString(j) && strlen(j->valuestring) < sizeof(cfg.client_ip)) {
         strlcpy(cfg.client_ip, j->valuestring, sizeof(cfg.client_ip));
@@ -510,17 +490,6 @@ static esp_err_t handle_gw_post(httpd_req_t *req)
         cfg.tls_port = j->valueint;
     }
 
-    if (cfg.tx_gpio == cfg.rx_gpio) {
-        cJSON_Delete(root);
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "tx and rx must differ");
-        return ESP_FAIL;
-    }
-    /* 避免与串口控制台冲突 */
-    if (cfg.tx_gpio == 11 || cfg.rx_gpio == 11 || cfg.tx_gpio == 12 || cfg.rx_gpio == 12) {
-        cJSON_Delete(root);
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "GPIO11/12 used by console UART");
-        return ESP_FAIL;
-    }
     /* TLS 端口不能与明文端口相同 */
     if (cfg.tls_enabled && cfg.tls_port == cfg.port) {
         cJSON_Delete(root);

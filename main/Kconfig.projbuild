@@ -52,3 +52,82 @@ menu "Web Provisioning Configuration"
             ESP32-C5-DevKitC-1 为 GPIO27；设为 -1 禁用指示灯。
 
 endmenu
+
+menu "Modbus Slave Configuration"
+
+    config MB_DI_GPIO_0
+        int "DI0 GPIO (Modbus 离散输入 0x1000)"
+        default 4
+        range -1 28
+        help
+            数字输入 0 的 GPIO，-1 = 未使用（对应寄存器恒为 0）。
+            本开发板（排针 32 脚）建议避开：
+            GPIO9（BOOT 键）、11/12（串口 U0TXD/RXD）、13/14（USB_D-/D+）、
+            27（RGB）、28（下载模式 strapping）；IO16-22 未引出排针不可用。
+
+    config MB_DI_GPIO_1
+        int "DI1 GPIO (Modbus 离散输入 0x1001)"
+        default 5
+        range -1 28
+
+    config MB_DI_GPIO_2
+        int "DI2 GPIO (Modbus 离散输入 0x1002)"
+        default 6
+        range -1 28
+
+    config MB_DI_GPIO_3
+        int "DI3 GPIO (Modbus 离散输入 0x1003)"
+        default 7
+        range -1 28
+
+    config MB_DO_GPIO_0
+        int "DO0 GPIO (Modbus 线圈 0x0000)"
+        default 23
+        range -1 28
+        help
+            数字输出 0 的 GPIO，-1 = 未使用（写操作被忽略）。
+            本开发板（排针 32 脚）建议避开：
+            GPIO9（BOOT 键）、11/12（串口 U0TXD/RXD）、13/14（USB_D-/D+）、
+            27（RGB）、28（下载模式 strapping）；IO16-22 未引出排针不可用。
+
+    config MB_DO_GPIO_1
+        int "DO1 GPIO (Modbus 线圈 0x0001)"
+        default 24
+        range -1 28
+
+    config MB_DO_GPIO_2
+        int "DO2 GPIO (Modbus 线圈 0x0002)"
+        default 25
+        range -1 28
+
+    config MB_DO_GPIO_3
+        int "DO3 GPIO (Modbus 线圈 0x0003)"
+        default 26
+        range -1 28
+
+    config MB_ESTOP1_GPIO
+        int "急停1 GPIO (Modbus 离散输入 0x1004)"
+        default 8
+        range -1 28
+        help
+            急停1 输入 GPIO（常闭 NC 触点，一端接 GND，内部上拉）。
+            正常闭合=寄存器 1，按下断开=寄存器 0 并锁存；
+            需急停松开后按复位按钮（上升沿）才回到 1。设为 -1 禁用（恒为 1）。
+
+    config MB_ESTOP2_GPIO
+        int "急停2 GPIO (Modbus 离散输入 0x1005)"
+        default 10
+        range -1 28
+        help
+            急停2 输入 GPIO，语义同急停1，独立锁存。
+
+    config MB_RESET_BTN_GPIO
+        int "复位按钮 GPIO (Modbus 离散输入 0x1006)"
+        default 15
+        range -1 28
+        help
+            复位按钮输入 GPIO（常开 NO 触点，一端接 GND，内部上拉）。
+            按下=寄存器 1；其按下上升沿用于解除急停锁存。设为 -1 禁用（恒为 0，
+            且急停锁存只能断电重启解除）。
+
+endmenu

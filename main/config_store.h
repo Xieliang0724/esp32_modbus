@@ -48,15 +48,12 @@ esp_err_t config_store_save(const wifi_config_data_t *cfg);
 esp_err_t config_store_clear(void);
 
 /* ------------------------------------------------------------------ */
-/* Modbus 网关配置（独立 NVS 命名空间 mb_gw）                           */
+/* Modbus TCP 从站配置（独立 NVS 命名空间 mb_gw）                       */
 /* ------------------------------------------------------------------ */
 
 typedef struct {
-    bool     enabled;              /* 是否启用网关 */
+    bool     enabled;              /* 是否启用 Modbus TCP 从站 */
     uint16_t port;                 /* Modbus TCP 端口，默认 502 */
-    uint32_t baud;                 /* UART1 波特率 */
-    int8_t   tx_gpio;              /* UART1 TX GPIO */
-    int8_t   rx_gpio;              /* UART1 RX GPIO */
     char     client_ip[16];        /* 允许客户端 IP，空 = 无限制 */
     bool     tls_enabled;          /* 是否启用 TLS 监听（单向，固件内置证书） */
     uint16_t tls_port;             /* TLS 端口，默认 802 */

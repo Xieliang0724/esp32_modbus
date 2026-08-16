@@ -21,6 +21,7 @@
 
 #include "config_store.h"
 #include "modbus_gw.h"
+#include "mb_device.h"
 #include "rgb_led.h"
 #include "web_server.h"
 #include "wifi_mgr.h"
@@ -113,8 +114,12 @@ void app_main(void)
         return;
     }
 
-    /* 网关必须在 wifi_mgr_init（esp_netif_init/lwIP）之后启动，
+    /* Modbus 从站必须在 wifi_mgr_init（esp_netif_init/lwIP）之后启动，
      * 否则 socket() 会因 lwIP 未初始化而断言崩溃 */
+    ret = mb_device_init();     /* 初始化 DI/DO GPIO 与寄存器模型 */
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "mb device init failed: %s", esp_err_to_name(ret));
+    }
     modbus_gw_init();
 
 #if CONFIG_PROV_LED_GPIO >= 0

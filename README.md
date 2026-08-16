@@ -2,7 +2,7 @@
 
 ESP32-C5 的 Modbus 网关固件，基于 **esp32c5_web_provision v1.2.0** 代码库新建。Wi-Fi 配网部分与基版本完全一致，后续在此基础之上迭代 Modbus 相关新功能。
 
-> 📌 **项目沿革**：本工程由 `esp32c5_web_provision`（v1.2.0）全量复制而来（源码 + 本地构建文件一并复用），Web 配网、失联兜底、Modbus RTU↔TCP 网关（含 TLS）、RGB 状态灯等能力与基版本完全一致；版本号从 **v1.0.0** 重新开始计数。
+> 📌 **项目沿革**：本工程由 `esp32c5_web_provision`（v1.2.0）全量复制而来（源码 + 本地构建文件一并复用），Web 配网、失联兜底、Modbus TCP 从站（含 TLS）、RGB 状态灯等能力源自基版本；版本号从 **v1.0.0** 重新开始计数。v1.1.0 起从"RTU↔TCP 网关"升级为"ESP32 本体 Modbus TCP 从站"。
 
 ## 功能特性
 
@@ -52,7 +52,8 @@ esp32_modbus/
     ├── app_main.c            # 入口：初始化 + 启动流程
     ├── config_store.[ch]     # NVS 配置持久化
     ├── wifi_mgr.[ch]         # Wi-Fi 状态机（AP/STA/扫描/静态IP/回退）
-    ├── modbus_gw.[ch]        # Modbus RTU↔TCP 网关（协议转换 + TLS）
+    ├── modbus_gw.[ch]        # Modbus TCP 从站（Server）：TCP/TLS 监听、MBAP 组帧
+    ├── mb_device.[ch]        # 从站设备模型：寄存器映射 + 功能码 + DI/DO GPIO 外设层
     ├── rgb_led.[ch]          # RGB 状态灯（GPIO27 WS2812）
     ├── web_server.[ch]       # HTTP 配网服务器（REST API）
     └── www/index.html        # 内嵌配网网页（EMBED_FILES）
@@ -117,28 +118,87 @@ idf.py -p /dev/cu.usbmodem* flash monitor      # macOS 串口设备名
 | `/api/scan` | GET | 触发/查询双频扫描，返回网络列表 |
 | `/api/config` | POST | 提交 `{ssid, password, ip_mode, ip, netmask, gateway, dns, ap_off}` |
 | `/api/reset` | POST | 清除配置并回到配网模式 |
-| `/api/gw` | GET/POST | 读写 Modbus 网关配置 `{enabled, port, baud, tx, rx, client_ip}` |
+| `/api/gw` | GET/POST | 读写 Modbus TCP 从站配置 `{enabled, port, client_ip, tls_enabled, tls_port}` |
 
-## Modbus RTU ↔ TCP 网关（高级设置）
+## Modbus TCP 从站（ESP32 本体，高级设置）
 
-配网页面底部 **⚙️ 高级设置** 中可配置并启用，ESP32 作为 **Modbus TCP 服务端**，把 TCP 请求转换成 RTU 通过 UART1 与 GD32 从站通信（**协议转换，非透传**）：
+配网页面底部 **⚙️ 高级设置** 中可配置并启用。**ESP32 本体作为 Modbus TCP 从站（Server）**，寄存器直接映射到本机外设，客户端（上位机/SCADA/Modbus Poll）通过 TCP 直连读写，**不再依赖外部从站**（v1.1.0 起移除 GD32 RTU 透传，UART1 已释放）。
 
-- **TCP → RTU**：去掉 MBAP 头 → 组 RTU 帧（从站地址 + 重新计算 CRC16）→ UART1 发出
-- **RTU → TCP**：校验 CRC16 与从站地址 → 去掉 CRC → 组 MBAP 帧（回填事务 ID）→ 发回客户端
+### 寄存器映射表
+
+| 区域 | 功能码 | 地址 | 数量 | 映射 |
+|---|---|---|---|---|
+| 线圈 COIL | 01/05/0F | 0x0000–0x0003 | 4 | DO0–DO3（GPIO 数字输出，上电默认断开） |
+| 离散输入 DI | 02 | 0x1000–0x1006 | 7 | DI0-3 通用输入 / DI4-5 急停 / DI6 复位（见下表） |
+| 输入寄存器 IR | 04 | 0x3000–0x3002 | 3 | 设备信息（见下表） |
+| 保持寄存器 HR | 03/06/10 | 0x4000–0x4003 | 4 | 用户参数（RAM 暂存，掉电清零） |
+
+> 地址为 0 起始（Modbus 协议线上 +1）。GPIO 引脚在 menuconfig（`Modbus Slave Configuration`）中配置，`-1` = 该路未使用。
+
+**离散输入 DI 表（0x1000 起，只读）：**
+
+| 地址 | 通道 | 语义 |
+|---|---|---|
+| 0x1000–0x1003 | DI0–DI3 | 通用数字输入（GPIO，内部上拉，实时电平） |
+| 0x1004 | DI4 | **急停1**（常闭 NC：正常=1，按下=0，**锁存**） |
+| 0x1005 | DI5 | **急停2**（常闭 NC：正常=1，按下=0，**锁存**） |
+| 0x1006 | DI6 | **复位按钮**（常开 NO：按下=1） |
+| 0x1007 | DI7 | 未使用（恒 0） |
+
+**急停锁存语义**（安全回路）：急停按下 → 对应寄存器变 **0** 并锁存（松开不回 1）；必须满足 **急停已松开** 且 **按一下复位按钮**（上升沿，一次同时解除两路），寄存器才回到 1。急停只上报状态，不联动 DO。复位按钮禁用（-1）时，急停锁存只能断电重启解除。
+
+> ⚠️ **Fail-safe**：急停回路**断开即视为急停触发**（未接线/断线/按下时寄存器均为 0）。接线后正常状态应为：NC 触点闭合接 GND → 寄存器 1。
+
+**输入寄存器（0x3000 起，只读）：**
+
+| 地址 | 内容 |
+|---|---|
+| 0x3000 | 固件版本号 `(主版本<<8) | 次版本` |
+| 0x3001 | WiFi STA 状态（0 = 未联网，1 = 已联网） |
+| 0x3002/0x3003 | 设备运行秒数（低 16 位 / 高 16 位） |
+
+**支持功能码**：01（读线圈）、02（读离散输入）、03（读保持寄存器）、04（读输入寄存器）、05（写单线圈）、06（写单寄存器）、0F（写多线圈）、10（写多寄存器）；非法请求返回标准 Modbus 异常码（01/02/03）。
+
+### 配置项
 
 | 配置项 | 默认 | 说明 |
 |---|---|---|
-| 启用网关 | 关 | 勾选后生效 |
+| 启用从站 | 关 | 勾选后生效 |
 | 本地 TCP 端口 | 502 | Modbus 明文标准端口 |
 | 允许客户端 IP | 空 | 留空 = 允许所有客户端；填写后仅该 IP 可连 |
-| RTU 波特率 | 9600 | 与 GD32 从站一致 |
-| UART1 TX/RX GPIO | 5 / 6 | 按接线修改，勿用 GPIO11/12（控制台）与 27（RGB） |
 | 启用 TLS | 关 | 单向 TLS（服务端证书），与明文 502 并存 |
 | TLS 端口 | 802 | Modbus Security 标准端口 |
+| 通用 DI/DO GPIO | DI=GPIO4-7 / DO=GPIO23-26 | menuconfig 配置 |
+| 急停1/急停2/复位 GPIO | GPIO8 / GPIO10 / GPIO15 | menuconfig 配置 |
 
-**接线**：ESP32 `TX GPIO5` → GD32 `RX`，ESP32 `RX GPIO6` ← GD32 `TX`，共地 GND。TCP 请求中的单元号（MBAP uid）即 RTU 从站地址。
+### 本开发板接线（排针 32 脚）
 
-### Modbus TLS（v1.1.0+）
+| Modbus 通道 | 排针引脚 | GPIO | 接线 |
+|---|---|---|---|
+| DI0 / DI1 / DI2 / DI3 | IO4 / IO5 / IO6 / IO7 | GPIO4/5/6/7 | 通用干接点，一端接 GND |
+| DI4 急停1 | IO8 | GPIO8 | 常闭 NC 触点，一端接 GND |
+| DI5 急停2 | IO10 | GPIO10 | 常闭 NC 触点，一端接 GND |
+| DI6 复位按钮 | IO15 | GPIO15 | 常开 NO 按钮，一端接 GND |
+| DO0 / DO1 / DO2 / DO3 | IO23 / IO24 / IO25 / IO26 | GPIO23/24/25/26 | 继电器/指示灯，上电默认断开 |
+
+> ⚠️ 本开发板避开的引脚：**IO11/12**（串口 U0TXD/RXD）、**IO13/14**（USB_D-/D+，板载 USB 口）、**IO27**（RGB LED）、**IO28**（下载模式 strapping）、**IO9**（BOOT 键）。IO16-22 未引出排针，不可用。如需调整接线，在 menuconfig（`Modbus Slave Configuration`）中修改对应 GPIO。
+
+### 客户端测试示例
+
+```bash
+# 用 modpoll（Linux/macOS）
+modpoll -m tcp -a 1 -t 0 -r 0x1001 -c 7 <设备IP>     # 读全部 7 路离散输入（DI0-6）
+modpoll -m tcp -a 1 -r 0x3000 -c 3 <设备IP>           # 读输入寄存器（设备信息）
+# 写 DO0 线圈（ON）
+modpoll -m tcp -a 1 -t 0 -r 0x0001 -c 1 -1 <设备IP>   # 需 modpoll 0.x 具体参数，见其文档
+```
+
+**急停/复位验证流程**：
+1. 正常状态：读 DI4/DI5 = `1`（触点闭合）
+2. 按下急停 → DI4（或 DI5）= `0`；松开急停 → 仍为 `0`（已锁存）
+3. 按一下复位按钮（DI6 读到 1）→ DI4/DI5 回到 `1`（解除锁存）
+
+### Modbus TLS（v1.1.0+ 保留自基版本）
 
 - 启用后设备同时监听 **明文 502** 和 **TLS 802** 两个端口
 - **单向 TLS**：客户端验证设备证书（`CN=esp32c5.local`，自签名，10 年），设备不验证客户端
@@ -156,7 +216,7 @@ openssl req -x509 -newkey rsa:2048 -keyout server_key.pem -out server_cert.pem \
 
 ## 版本管理（git tag）
 
-当前版本 **v1.0.0** 已打标签，固件内置版本号（网页状态面板 / `/api/status` / 串口日志 `App version:` 均可查看）。
+当前版本 **v1.1.0** 已打标签，固件内置版本号（网页状态面板 / `/api/status` / 串口日志 `App version:` 均可查看）。
 
 **发布新版本**（改完代码后）：
 
