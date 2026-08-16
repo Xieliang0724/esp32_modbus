@@ -1,8 +1,82 @@
-# ESP32-C5 Modbus 网关固件（esp32_modbus）
+<div align="center">
 
-ESP32-C5 的 Modbus 网关固件，基于 **esp32c5_web_provision v1.2.0** 代码库新建。Wi-Fi 配网部分与基版本完全一致，后续在此基础之上迭代 Modbus 相关新功能。
+# ESP32-C5 Modbus TCP 从站固件
 
-> 📌 **项目沿革**：本工程由 `esp32c5_web_provision`（v1.2.0）全量复制而来（源码 + 本地构建文件一并复用），Web 配网、失联兜底、Modbus TCP 从站（含 TLS）、RGB 状态灯等能力源自基版本；版本号从 **v1.0.0** 重新开始计数。v1.1.0 起从"RTU↔TCP 网关"升级为"ESP32 本体 Modbus TCP 从站"。
+**Wi-Fi 配网 · Modbus TCP 从站 · 急停安全回路 · 网页调试工具**
+
+![version](https://img.shields.io/badge/版本-v1.1.1-blue)
+![chip](https://img.shields.io/badge/芯片-ESP32--C5-brightgreen)
+![protocol](https://img.shields.io/badge/协议-Modbus--TCP-important)
+![tls](https://img.shields.io/badge/TLS-502%20%2F%20802-blueviolet)
+![idf](https://img.shields.io/badge/ESP--IDF-v6.0.1-yellow)
+![tool](https://img.shields.io/badge/测试工具-零依赖-9cf)
+
+ESP32-C5 本体作为 **Modbus TCP 从站（Server）**：寄存器直接映射到本机外设
+（DI / DO / 急停锁存 / 复位按钮），支持**明文 502** 与 **TLS 802** 双监听，
+配网页一键启用，自带零依赖网页调试工具。
+
+</div>
+
+---
+
+## 🚀 快速上手
+
+```bash
+git clone git@github.com:Xieliang0724/esp32_modbus.git
+cd esp32_modbus
+idf.py set-target esp32c5 && idf.py build
+idf.py -p /dev/cu.usbmodem* flash          # 烧录（Mac 串口名）
+
+python3 tools/modbus_tool.py               # 启动调试工具，浏览器自动打开
+```
+
+烧录后设备开机进入配网热点 `ESP32C5-XXXX` → 手机连上访问 `http://192.168.4.1` →
+**⚙️ 高级设置** 勾选"启用 Modbus TCP 从站" → 保存，即可用任意 Modbus 客户端读写。
+
+## ✨ 功能亮点
+
+| 能力 | 说明 |
+|---|---|
+| 🎛️ **Modbus TCP 从站** | ESP32 本体响应请求，寄存器直连本机外设，8 个功能码全支持 |
+| 🔒 **TLS 加密** | 明文 502 + Modbus Security 802 双监听，单向验证 |
+| 🛑 **急停安全回路** | 2 路急停（常闭 NC）+ 锁存 + 复位按钮解除，fail-safe 设计 |
+| 🔌 **DI / DO 外设** | 4 路通用输入 + 4 路输出，GPIO 全部 menuconfig 可配 |
+| 🌐 **Web 配网** | SoftAP + 网页双频扫描，DHCP / 静态 IP，断网自动兜底 |
+| 🧰 **零依赖调试工具** | 单文件 Python 网页工具，预设本项目寄存器映射 |
+| 💾 **配置持久化** | NVS 存储，断电重启自动重连 |
+| 🚦 **RGB 状态灯** | 板载 WS2812：橙=配网 / 蓝=热点有客户端 / 绿=已联网 |
+
+## 📋 寄存器映射速览
+
+| 区域 | 地址 | 功能码 | 内容 |
+|---|---|---|---|
+| 线圈 COIL | `0x0000` | 01 / 05 / 0F | DO0–DO3 数字输出 |
+| 离散输入 DI | `0x1000` | 02 | DI0-3 通用输入 · DI4/5 急停（锁存）· DI6 复位 |
+| 输入寄存器 IR | `0x3000` | 04 | 固件版本 / WiFi 状态 / 运行秒数 |
+| 保持寄存器 HR | `0x4000` | 03 / 06 / 10 | 用户参数（RAM 暂存） |
+
+> 急停为**常闭 NC**：正常闭合 = 1，按下 = 0 并**锁存**；急停松开后按一下复位按钮（上升沿）才回到 1。回路断开（断线/未接）一律视为急停触发（fail-safe）。
+
+## 📖 目录
+
+- [功能特性](#功能特性)
+- [环境要求](#环境要求)
+- [目录结构](#目录结构)
+- [编译与烧录](#编译与烧录)
+- [使用流程](#使用流程)
+- [配置项（menuconfig）](#配置项menuconfig-sdkconfigdefaults)
+- [REST API](#rest-api)
+- [Modbus TCP 从站（详细）](#modbus-tcp-从站esp32-本体高级设置)
+  - [寄存器映射](#寄存器映射表)
+  - [配置项](#配置项)
+  - [本开发板接线](#本开发板接线排针-32-脚)
+  - [客户端测试示例](#客户端测试示例)
+  - [Modbus 测试工具](#🧰-modbus-测试工具网页版maclinux-通用)
+  - [Modbus TLS](#modbus-tlsv110-保留自基版本)
+- [版本管理（git tag）](#版本管理git-tag)
+- [常见问题](#常见问题)
+
+---
 
 ## 功能特性
 
@@ -45,15 +119,17 @@ esp32_modbus/
 ├── CMakeLists.txt
 ├── sdkconfig.defaults        # 目标/闪存大小等默认配置
 ├── .vscode/settings.json     # 项目级 IDF 路径（不影响全局设置）
+├── tools/
+│   └── modbus_tool.py        # Modbus TCP 调试工具（零依赖，网页版）
 └── main/
     ├── CMakeLists.txt
-    ├── Kconfig.projbuild     # 配网相关 menuconfig 选项
+    ├── Kconfig.projbuild     # 配网 + Modbus 从站 menuconfig 选项
     ├── idf_component.yml     # 托管组件依赖（espressif/cjson）
     ├── app_main.c            # 入口：初始化 + 启动流程
     ├── config_store.[ch]     # NVS 配置持久化
     ├── wifi_mgr.[ch]         # Wi-Fi 状态机（AP/STA/扫描/静态IP/回退）
     ├── modbus_gw.[ch]        # Modbus TCP 从站（Server）：TCP/TLS 监听、MBAP 组帧
-    ├── mb_device.[ch]        # 从站设备模型：寄存器映射 + 功能码 + DI/DO GPIO 外设层
+    ├── mb_device.[ch]        # 从站设备模型：寄存器映射 + 功能码 + DI/DO/急停 GPIO
     ├── rgb_led.[ch]          # RGB 状态灯（GPIO27 WS2812）
     ├── web_server.[ch]       # HTTP 配网服务器（REST API）
     └── www/index.html        # 内嵌配网网页（EMBED_FILES）
@@ -108,6 +184,10 @@ idf.py -p /dev/cu.usbmodem* flash monitor      # macOS 串口设备名
 | `CONFIG_PROV_STA_TIMEOUT_MS` | 15000 | 单次连接超时（毫秒） |
 | `CONFIG_PROV_RESET_GPIO` | 9 | 复位配网按键 GPIO（-1 禁用） |
 | `CONFIG_ESPTOOLPY_FLASHSIZE_8MB` | y | 闪存 8MB（实测 N8R4；N4 板改 4MB） |
+| `CONFIG_MB_DI_GPIO_0~3` | 4/5/6/7 | 通用输入 GPIO（-1 禁用该路） |
+| `CONFIG_MB_DO_GPIO_0~3` | 23/24/25/26 | 数字输出 GPIO（-1 禁用该路） |
+| `CONFIG_MB_ESTOP1/2_GPIO` | 8 / 10 | 急停1/急停2 GPIO（-1 禁用，恒为正常） |
+| `CONFIG_MB_RESET_BTN_GPIO` | 15 | 复位按钮 GPIO（-1 禁用，急停只能断电解除） |
 
 ## REST API
 
@@ -235,15 +315,16 @@ openssl req -x509 -newkey rsa:2048 -keyout server_key.pem -out server_cert.pem \
 
 ## 版本管理（git tag）
 
-当前版本 **v1.1.0** 已打标签，固件内置版本号（网页状态面板 / `/api/status` / 串口日志 `App version:` 均可查看）。
+当前版本 **v1.1.1** 已打标签，固件内置版本号（网页状态面板 / `/api/status` / 串口日志 `App version:` 均可查看）。
 
 **发布新版本**（改完代码后）：
 
 ```bash
 git add -A
-git commit -m "v1.1.0: 新功能描述"
-git tag -a v1.1.0 -m "v1.1.0"
+git commit -m "v1.2.0: 新功能描述"
+git tag -a v1.2.0 -m "v1.2.0"
 idf.py build && idf.py -p /dev/cu.usbserial-5C310834821 flash
+git push && git push --tags
 ```
 
 **回退到旧版本**（出问题时一键回到上个可用版本）：
@@ -251,7 +332,7 @@ idf.py build && idf.py -p /dev/cu.usbserial-5C310834821 flash
 ```bash
 git checkout v1.0.0
 idf.py build && idf.py -p /dev/cu.usbserial-5C310834821 flash
-git checkout master   # 回退完切回最新代码继续开发
+git checkout main   # 回退完切回最新代码继续开发
 ```
 
 > 提示：版本号由 `git describe` 自动生成（即 `PROJECT_VER`）；`build/`、`sdkconfig` 等已加入 `.gitignore` 不入库。若需**运行时自动回退**（OTA 升级失败自动回滚旧固件），可后续基于 IDF 的 OTA + `esp_ota_mark_app_valid_cancel_rollback` 机制扩展。
@@ -261,4 +342,13 @@ git checkout master   # 回退完切回最新代码继续开发
 - **连不上热点**：确认热点名是 `ESP32C5-XXXX`（日志中会打印）；若设了密码，确认密码 ≥8 位
 - **扫描不到 5G 网络**：确认路由器 5G 开启且设备处于 5G 覆盖范围（5G 穿墙弱）
 - **配网后想换网络**：长按 BOOT 3 秒，或连接热点（若未关闭）重新配置
+- **Modbus 连接被拒绝**：设备正在重启/重连（等几秒）或从站未启用（网页高级设置勾选"启用"）；用 `tools/modbus_tool.py` 的错误提示定位（会显示实际连接地址）
 - **IDF 版本兼容性**：本工程按 IDF v6.0.1 API 编写（`ESP_ERR_WIFI_CONN`、`esp_system.h`、cjson 托管组件等）；如用 v5.4/v5.5 请留意 API 差异
+
+---
+
+<div align="center">
+
+**项目沿革**：本工程由 [`esp32c5_web_provision`](https://github.com/Xieliang0724/esp32c5_web_provision)（v1.2.0）全量复制而来，v1.1.0 起从"RTU↔TCP 网关"升级为"ESP32 本体 Modbus TCP 从站"，版本号从 v1.0.0 重新计数。
+
+</div>
