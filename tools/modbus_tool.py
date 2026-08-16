@@ -261,7 +261,7 @@ PAGE = r'''<!DOCTYPE html>
   <div class="card">
     <h2>🔌 连接配置</h2>
     <div class="row">
-      <label>设备 IP <input type="text" id="ip" placeholder="192.168.0.175"></label>
+      <label>设备 IP <input type="text" id="ip" value="192.168.0.175" placeholder="如 192.168.0.175"></label>
       <label>端口 <input type="number" id="port" value="502" min="1" max="65535"></label>
       <label><input type="checkbox" id="tls"> TLS</label>
       <label>单元号 <input type="number" id="uid" value="1" min="0" max="247"></label>
@@ -361,8 +361,14 @@ function setStatus(cls, text){
 }
 
 function params(){
+  var ipv = $('ip').value.trim();
+  if (!ipv) {
+    setStatus('err', '未填 IP');
+    $('connErr').textContent = '❌ 请先在"设备 IP"框中输入设备地址（如 192.168.0.175）';
+    return null;
+  }
   return {
-    ip: $('ip').value.trim(),
+    ip: ipv,
     port: parseInt($('port').value, 10) || 502,
     tls: $('tls').checked,
     uid: parseInt($('uid').value, 10) || 1
@@ -385,7 +391,7 @@ function parseAddr(s){
 
 /* ---- 测试连接 ---- */
 $('btnTest').addEventListener('click', function(){
-  var p = params(); p.fc = 4; p.addr = 0x3000; p.qty = 1;
+  var p = params(); if (!p) return; p.fc = 4; p.addr = 0x3000; p.qty = 1;
   setStatus('busy', '测试中…');
   post('/api/read', p).then(function(d){
     if (d.ok) { setStatus('ok', '已连接 ' + p.ip + ':' + p.port + (p.tls?' (TLS)':'')); $('connErr').textContent=''; }
@@ -421,7 +427,7 @@ function desc(idx, addr, val){
 }
 
 function doRead(){
-  var p = params();
+  var p = params(); if (!p) return;
   p.fc = parseInt($('rfc').value, 10);
   p.addr = parseAddr($('raddr').value);
   p.qty = parseInt($('rqty').value, 10) || 1;
@@ -462,7 +468,7 @@ $('wtype').addEventListener('change', function(){
 });
 
 function doWrite(){
-  var p = params();
+  var p = params(); if (!p) return;
   var fc = parseInt($('wtype').value, 16);
   p.fc = fc;
   p.addr = parseAddr($('waddr').value);
@@ -490,7 +496,7 @@ function doWrite(){
 $('btnWrite').addEventListener('click', doWrite);
 
 function quickDo(no, on){
-  var p = params();
+  var p = params(); if (!p) return;
   p.fc = 5; p.addr = no; p.values = [on];
   post('/api/write', p).then(function(d){
     $('writeErr').textContent = d.ok ? ('✅ DO' + no + ' → ' + (on?'ON':'OFF') + '（' + d.message + '）') : ('❌ ' + d.error);
@@ -545,7 +551,9 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({'ok': False, 'error': 'bad request'}, 400)
             return
         try:
-            ip = body['ip']
+            ip = str(body.get('ip', '')).strip()
+            if not ip:
+                raise ValueError('未填写设备 IP（页面顶部"设备 IP"框）')
             port = int(body['port'])
             tls = bool(body.get('tls'))
             uid = int(body.get('uid', 1)) & 0xFF
@@ -568,9 +576,17 @@ class Handler(BaseHTTPRequestHandler):
         except (KeyError, ValueError, TypeError) as e:
             self._send_json({'ok': False, 'error': str(e)})
         except (socket.timeout, TimeoutError):
-            self._send_json({'ok': False, 'error': '请求超时（设备无响应）'})
+            self._send_json({'ok': False, 'error': '请求超时（设备无响应）→ 目标 %s:%d%s。检查 IP 是否正确、设备是否在线' % (
+                ip, port, ' (TLS)' if tls else '')})
+        except ConnectionRefusedError:
+            self._send_json({'ok': False, 'error': '连接被拒绝 → 目标 %s:%d%s 无监听。可能原因：① 设备正在重启/重连（等几秒再试）② Modbus 从站未启用（设备网页高级设置勾选"启用"）③ 端口填错（明文 502 / TLS 802）' % (
+                ip, port, ' (TLS)' if tls else '')})
+        except ConnectionResetError:
+            self._send_json({'ok': False, 'error': '连接被重置 → 目标 %s:%d%s。端口与 TLS 设置不匹配（502 明文端口不勾 TLS；802 是 TLS 端口需勾选 TLS）' % (
+                ip, port, ' (TLS)' if tls else '')})
         except (ConnectionError, OSError) as e:
-            self._send_json({'ok': False, 'error': '连接失败：%s' % e})
+            self._send_json({'ok': False, 'error': '连接失败 → 目标 %s:%d%s：%s' % (
+                ip, port, ' (TLS)' if tls else '', e)})
 
 
 def main():
