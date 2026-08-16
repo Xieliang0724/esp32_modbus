@@ -288,6 +288,13 @@ python3 tools/modbus_tool.py --port 9000     # 换端口
 python3 tools/modbus_tool.py --no-browser    # 不自动开浏览器
 ```
 
+**Mac 双击版（可选）**：一键生成 `ModbusTool.app`，双击图标即用（弹出终端 + 浏览器自动打开）：
+
+```bash
+./tools/make_app.sh                          # 生成到桌面 ~/Desktop/ModbusTool.app
+./tools/make_app.sh /任意目录                 # 生成到指定目录
+```
+
 功能：
 
 - **连接配置**：设备 IP / 端口（502 明文、802 TLS 可勾选）/ 单元号，一键"测试连接"
