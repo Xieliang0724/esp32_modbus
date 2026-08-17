@@ -73,6 +73,39 @@ static void start_reset_btn_task(void)
 
 #endif /* CONFIG_PROV_RESET_GPIO >= 0 */
 
+#if CONFIG_PROV_LED_GPIO >= 0
+
+#define ESTOP_LED_POLL_MS 300
+
+/* 急停 LED 监控任务：轮询急停综合状态，触发时红灯闪烁（覆盖网络状态色），
+ * 解除锁存后恢复为网络状态色（联网=绿 / 未联网=橙）。 */
+static void estop_led_task(void *arg)
+{
+    bool prev_active = false;
+    while (1) {
+        vTaskDelay(pdMS_TO_TICKS(ESTOP_LED_POLL_MS));
+        bool active = mb_device_estop_active();
+        if (active == prev_active) {
+            continue;
+        }
+        prev_active = active;
+        if (active) {
+            rgb_led_set_state(RGB_STATE_ESTOP);   /* 急停触发：红灯闪烁 */
+        } else if (wifi_mgr_get_state() == WIFI_MGR_STATE_CONNECTED) {
+            rgb_led_set_state(RGB_STATE_CONNECTED); /* 恢复：绿色 */
+        } else {
+            rgb_led_set_state(RGB_STATE_DEFAULT);   /* 恢复：橙色 */
+        }
+    }
+}
+
+static void start_estop_led_task(void)
+{
+    xTaskCreate(estop_led_task, "estop_led", 2048, NULL, 3, NULL);
+}
+
+#endif /* CONFIG_PROV_LED_GPIO >= 0 */
+
 /* Web 服务器常驻运行：SoftAP 开启时可经 192.168.4.1 访问；
  * 热点关闭（ap_off）后仍可经路由器分配的 IP 访问，方便再次配网。
  * 服务器在 app_main 中启动一次，不随 AP 开关启停。 */
@@ -125,6 +158,10 @@ void app_main(void)
 #if CONFIG_PROV_LED_GPIO >= 0
     rgb_led_init();
     rgb_led_set_state(RGB_STATE_DEFAULT);   /* 初始橙色 */
+#endif
+
+#if CONFIG_PROV_LED_GPIO >= 0
+    start_estop_led_task();   /* 急停触发 -> 红灯闪烁，解除后恢复网络状态色 */
 #endif
 
     /* Web 服务器常驻：SoftAP 开启时可经 192.168.4.1 访问，

@@ -277,7 +277,7 @@ PAGE = r'''<!DOCTYPE html>
     <div class="presets">
       <button onclick="preset(2,0x1000,7)">读全部 DI（急停/复位）</button>
       <button onclick="preset(1,0x0000,4)">读 DO 线圈</button>
-      <button onclick="preset(4,0x3000,4)">读设备信息</button>
+      <button onclick="preset(4,0x3000,8)">读急停状态+设备信息</button>
       <button onclick="preset(3,0x4000,4)">读保持寄存器</button>
     </div>
     <div class="row">
@@ -347,7 +347,7 @@ PAGE = r'''<!DOCTYPE html>
     </div>
   </div>
 
-  <div class="sub">寄存器映射：线圈 0x0000（DO0-3）· 离散输入 0x1000（DI0-6，0x1004/05 急停锁存、0x1006 复位）· 输入寄存器 0x3000（设备信息）· 保持寄存器 0x4000（参数）</div>
+  <div class="sub">寄存器映射：线圈 0x0000（DO0-3）· 离散输入 0x1000（DI0-6，0x1004/05 急停锁存、0x1006 复位）· 输入寄存器 0x3000（0x3000 急停状态、0x3001/02 急停实时、0x3003 复位、0x3004+ 设备信息）· 保持寄存器 0x4000（参数）</div>
 </div>
 
 <script>
@@ -415,14 +415,15 @@ function desc(idx, addr, val){
     0x1000:'DI0 通用输入', 0x1001:'DI1 通用输入', 0x1002:'DI2 通用输入', 0x1003:'DI3 通用输入',
     0x1004:'DI4 急停1（锁存）', 0x1005:'DI5 急停2（锁存）', 0x1006:'DI6 复位按钮', 0x1007:'DI7 未使用',
     0x0000:'DO0 输出', 0x0001:'DO1 输出', 0x0002:'DO2 输出', 0x0003:'DO3 输出',
-    0x3000:'固件版本', 0x3001:'WiFi 状态', 0x3002:'运行秒数(低)', 0x3003:'运行秒数(高)',
+    0x3000:'设备急停状态（1正常/0触发）', 0x3001:'急停1 实时IO', 0x3002:'急停2 实时IO', 0x3003:'复位按钮 实时',
+    0x3004:'固件版本', 0x3005:'WiFi 状态', 0x3006:'运行秒数(低)', 0x3007:'运行秒数(高)',
     0x4000:'用户参数0', 0x4001:'用户参数1', 0x4002:'用户参数2', 0x4003:'用户参数3'
   };
   var key = a;
   if (map[key] !== undefined) return map[key];
   return (addr >= 0x1000 && addr < 0x1000 + 8) ? '离散输入' :
          (addr >= 0x0000 && addr < 0x0000 + 4) ? '线圈' :
-         (addr >= 0x3000 && addr < 0x3000 + 4) ? '输入寄存器' :
+         (addr >= 0x3000 && addr < 0x3000 + 8) ? '输入寄存器' :
          (addr >= 0x4000 && addr < 0x4000 + 4) ? '保持寄存器' : '—';
 }
 

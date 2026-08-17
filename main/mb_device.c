@@ -55,11 +55,15 @@ static SemaphoreHandle_t s_reg_mutex;  /* 线圈/保持寄存器访问互斥    
 static bool s_estop_latched[MB_ESTOP_COUNT];
 static bool s_reset_prev = false;      /* 复位按钮上次电平（上升沿检测） */
 
-/* 输入寄存器（只读设备信息）：0x3000 起 */
-#define INREG_FW_VERSION  0   /* 固件版本 major<<8|minor */
-#define INREG_WIFI_STATE  1   /* STA 状态 0=未连接 1=已连接 */
-#define INREG_UPTIME_LO   2   /* 运行秒数低 16 位 */
-#define INREG_UPTIME_HI   3   /* 运行秒数高 16 位 */
+/* 输入寄存器（只读）：0x3000 起 */
+#define INREG_ESTOP_STATE 0   /* 设备急停综合状态：1=正常，0=触发（锁存） */
+#define INREG_ESTOP1_RAW  1   /* 急停1 实时触点：1=闭合正常，0=按下/断开 */
+#define INREG_ESTOP2_RAW  2   /* 急停2 实时触点 */
+#define INREG_RESET_RAW   3   /* 复位按钮实时：1=按下 */
+#define INREG_FW_VERSION  4   /* 固件版本 major<<8|minor */
+#define INREG_WIFI_STATE  5   /* STA 状态 0=未连接 1=已连接 */
+#define INREG_UPTIME_LO   6   /* 运行秒数低 16 位 */
+#define INREG_UPTIME_HI   7   /* 运行秒数高 16 位 */
 
 /* ------------------------------------------------------------------ */
 /* 工具函数                                                             */
@@ -104,12 +108,14 @@ static bool reset_btn_pressed(void)
     return (gpio_get_level(s_reset_gpio) == 0);
 }
 
-/* 更新急停锁存（在读取 DI4/DI5 时调用）：
+/* 更新急停锁存（在读取 DI4/DI5、输入寄存器 0x3000 时调用）：
  *   - 急停按下（触点断开）→ 立即锁存（寄存器 0）
  *   - 急停松开后，检测到复位按钮上升沿 → 解除锁存（寄存器 1）
- * 复位沿为全局事件：一次按下同时解除所有已松开急停的锁存。 */
-static void estop_latch_update(void)
+ * 复位沿为全局事件：一次按下同时解除所有已松开急停的锁存。
+ * 返回综合状态：true = 任一路急停锁存中（触发）。 */
+static bool estop_latch_update(void)
 {
+    bool active = false;
     xSemaphoreTake(s_reg_mutex, portMAX_DELAY);
     bool reset = reset_btn_pressed();
     bool reset_edge = reset && !s_reset_prev;
@@ -121,9 +127,16 @@ static void estop_latch_update(void)
         } else if (reset_edge) {
             s_estop_latched[i] = false;            /* 松开 + 复位按下，解除 */
         }
-        /* 其他情况保持当前锁存状态 */
+        active |= s_estop_latched[i];
     }
     xSemaphoreGive(s_reg_mutex);
+    return active;
+}
+
+/* 对外：设备急停综合状态（含锁存更新），供 LED 等模块轮询 */
+bool mb_device_estop_active(void)
+{
+    return estop_latch_update();
 }
 
 /* 离散输入读取：DI0-3 通用 / DI4-5 急停（锁存） / DI6 复位按钮 / DI7 恒 0 */
@@ -178,6 +191,19 @@ static uint16_t fw_version_reg(void)
 static void inreg_read(uint8_t idx, uint16_t *out)
 {
     switch (idx) {
+    case INREG_ESTOP_STATE:
+        /* 设备急停综合状态：1=正常，0=触发（锁存，需复位解除） */
+        *out = estop_latch_update() ? 0 : 1;
+        break;
+    case INREG_ESTOP1_RAW:
+        *out = estop_contact_ok(0) ? 1 : 0;
+        break;
+    case INREG_ESTOP2_RAW:
+        *out = estop_contact_ok(1) ? 1 : 0;
+        break;
+    case INREG_RESET_RAW:
+        *out = reset_btn_pressed() ? 1 : 0;
+        break;
     case INREG_FW_VERSION:
         *out = fw_version_reg();
         break;
@@ -261,7 +287,7 @@ static void read_words(uint8_t fc, uint16_t base_idx, const uint8_t *pdu,
     }
     uint16_t addr = (uint16_t)((pdu[1] << 8) | pdu[2]);
     uint16_t qty  = (uint16_t)((pdu[3] << 8) | pdu[4]);
-    uint16_t total = 4;
+    uint16_t total = (fc == 0x03) ? MB_MAX_HOLD : MB_MAX_INREG;
     if (qty < 1 || qty > 125 || addr < base_idx || addr + qty > base_idx + total) {
         exception(fc, MB_EX_ILLEGAL_ADDRESS, resp, resp_len);
         return;
