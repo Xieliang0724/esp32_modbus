@@ -139,7 +139,7 @@ bool mb_device_estop_active(void)
     return estop_latch_update();
 }
 
-/* 离散输入读取：DI0-3 通用 / DI4-5 急停（锁存） / DI6 复位按钮 / DI7 恒 0 */
+/* 离散输入读取：DI0-3 通用 / DI4-5 急停（实时触点，无锁存） / DI6 复位按钮 / DI7 恒 0 */
 static void di_read_full(uint8_t idx, bool *out)
 {
     if (idx < 4) {
@@ -148,14 +148,10 @@ static void di_read_full(uint8_t idx, bool *out)
     }
     switch (idx) {
     case MB_DI_ESTOP1:
-    case MB_DI_ESTOP2: {
-        estop_latch_update();
-        xSemaphoreTake(s_reg_mutex, portMAX_DELAY);
-        bool latched = s_estop_latched[idx - MB_DI_ESTOP1];
-        xSemaphoreGive(s_reg_mutex);
-        *out = latched ? false : true;   /* 未锁存=1（正常） */
+    case MB_DI_ESTOP2:
+        /* 实时 IO 状态：1=触点闭合（正常），0=按下/断开，随按键实时变化 */
+        *out = estop_contact_ok(idx - MB_DI_ESTOP1);
         break;
-    }
     case MB_DI_RESET_BTN:
         *out = reset_btn_pressed();
         break;
