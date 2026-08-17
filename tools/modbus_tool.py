@@ -275,21 +275,22 @@ PAGE = r'''<!DOCTYPE html>
   <div class="card">
     <h2>📖 读取</h2>
     <div class="presets">
-      <button onclick="preset(2,0x1000,7)">读全部 DI（急停/复位）</button>
-      <button onclick="preset(1,0x0000,4)">读 DO 线圈</button>
-      <button onclick="preset(4,0x3000,8)">读急停状态+设备信息</button>
-      <button onclick="preset(3,0x4000,4)">读保持寄存器</button>
+      <button onclick="preset(2,0,7)">读全部 DI（急停/复位）</button>
+      <button onclick="preset(1,0,4)">读 DO 线圈</button>
+      <button onclick="preset(4,0,8)">读急停状态+设备信息</button>
+      <button onclick="preset(3,0,4)">读保持寄存器</button>
     </div>
     <div class="row">
       <label>功能码
-        <select id="rfc">
+        <select id="rfc" onchange="addrPreview()">
           <option value="1">01 读线圈</option>
           <option value="2" selected>02 读离散输入</option>
           <option value="3">03 读保持寄存器</option>
           <option value="4">04 读输入寄存器</option>
         </select>
       </label>
-      <label>起始地址 <input type="text" id="raddr" value="0x1000"></label>
+      <label>起始地址 <input type="text" id="raddr" value="0" oninput="addrPreview()"></label>
+      <span id="raddrPrev" class="hint" style="font-family:monospace;"></span>
       <label>数量 <input type="number" id="rqty" value="7" min="1" max="125"></label>
       <button id="btnRead">读取</button>
       <label style="display:inline-flex;align-items:center;gap:4px;">
@@ -297,6 +298,7 @@ PAGE = r'''<!DOCTYPE html>
       </label>
       <label>间隔 <input type="number" id="interval" value="1000" min="200" style="width:80px;"> ms</label>
     </div>
+    <div class="hint" style="margin-top:6px;">💡 地址填<b>相对地址</b>（从 0 开始），按功能码自动补全前缀：01/05→线圈 0x0000、02→离散输入 0x1000、03/06/10→保持寄存器 0x4000、04→输入寄存器 0x3000。也可直接填 <code>0x</code> 开头的绝对地址。</div>
     <div style="margin-top:10px;">
       <table>
         <thead><tr><th style="width:120px;">地址</th><th style="width:100px;">值</th><th>说明</th></tr></thead>
@@ -313,14 +315,15 @@ PAGE = r'''<!DOCTYPE html>
       <div>
         <div class="row" style="margin-bottom:10px;">
           <label>类型
-            <select id="wtype">
+            <select id="wtype" onchange="addrPreview()">
               <option value="05">05 写单线圈</option>
               <option value="06">06 写单寄存器</option>
               <option value="0f">0F 写多线圈</option>
               <option value="10">10 写多寄存器</option>
             </select>
           </label>
-          <label>起始地址 <input type="text" id="waddr" value="0x0000"></label>
+          <label>起始地址 <input type="text" id="waddr" value="0" oninput="addrPreview()"></label>
+          <span id="waddrPrev" class="hint" style="font-family:monospace;"></span>
         </div>
         <div class="row">
           <label>值
@@ -383,10 +386,26 @@ function post(url, body){
   }).then(function(r){ return r.json(); });
 }
 
-/* ---- 地址解析：支持 0x 前缀十六进制 ---- */
-function parseAddr(s){
+/* ---- 地址解析：相对地址按功能码自动补全区域前缀；0x 开头=绝对地址 ---- */
+var FC_BASE = { 1:0x0000, 2:0x1000, 3:0x4000, 4:0x3000, 5:0x0000, 6:0x4000, 15:0x0000, 16:0x4000 };
+
+function calcAddr(fc, s){
   s = String(s).trim();
-  return parseInt(s, s.toLowerCase().startsWith('0x') ? 16 : 10);
+  if (/^0x/i.test(s)) return parseInt(s, 16);      /* 绝对地址 */
+  var a = parseInt(s, 10);
+  if (isNaN(a)) return NaN;
+  var base = FC_BASE[fc] !== undefined ? FC_BASE[fc] : 0;
+  return base + a;                                  /* 相对地址 + 区域基址 */
+}
+
+/* 地址预览：显示实际 Modbus 地址 */
+function addrPreview(){
+  var rf = parseInt($('rfc').value, 10);
+  var a = calcAddr(rf, $('raddr').value);
+  $('raddrPrev').textContent = isNaN(a) ? '' : '→ 实际 0x' + ('0000'+a.toString(16).toUpperCase()).slice(-4);
+  var wf = parseInt($('wtype').value, 16);
+  var wa = calcAddr(wf, $('waddr').value);
+  $('waddrPrev').textContent = isNaN(wa) ? '' : '→ 实际 0x' + ('0000'+wa.toString(16).toUpperCase()).slice(-4);
 }
 
 /* ---- 测试连接 ---- */
@@ -402,10 +421,11 @@ $('btnTest').addEventListener('click', function(){
 });
 
 /* ---- 读取 ---- */
-function preset(fc, addr, qty){
+function preset(fc, relAddr, qty){
   $('rfc').value = String(fc);
-  $('raddr').value = '0x' + addr.toString(16).toUpperCase();
+  $('raddr').value = String(relAddr);
   $('rqty').value = qty;
+  addrPreview();
   doRead();
 }
 
@@ -430,7 +450,7 @@ function desc(idx, addr, val){
 function doRead(){
   var p = params(); if (!p) return;
   p.fc = parseInt($('rfc').value, 10);
-  p.addr = parseAddr($('raddr').value);
+  p.addr = calcAddr(p.fc, $('raddr').value);
   p.qty = parseInt($('rqty').value, 10) || 1;
   if (isNaN(p.addr)) { $('readErr').textContent = '❌ 地址格式错误'; return; }
   $('readErr').textContent = '';
@@ -466,20 +486,20 @@ $('wtype').addEventListener('change', function(){
   var single = (t === '05' || t === '06');
   $('wval1').style.display = single ? '' : 'none';
   $('wvals').style.display = single ? 'none' : '';
+  addrPreview();
 });
 
 function doWrite(){
   var p = params(); if (!p) return;
   var fc = parseInt($('wtype').value, 16);
   p.fc = fc;
-  p.addr = parseAddr($('waddr').value);
+  p.addr = calcAddr(fc, $('waddr').value);
   if (isNaN(p.addr)) { $('writeErr').textContent = '❌ 地址格式错误'; return; }
   var vals;
   if (fc === 0x05) {
     vals = [$('wval1').value === '1' ? 1 : 0];
   } else if (fc === 0x06) {
     vals = [parseInt($('wval1').value, 10) || 0];
-    if ($('wval1').selectedIndex < 0) vals = [parseAddr($('wval1').value) || 0];
   } else {
     var raw = $('wvals').value.trim();
     vals = raw ? raw.split(/[,，\s]+/).map(function(s){
@@ -508,6 +528,9 @@ function quickDo(no, on){
 document.addEventListener('keydown', function(e){
   if (e.key === 'Enter' && e.target.tagName !== 'BUTTON') doRead();
 });
+
+/* 初始化地址预览 */
+addrPreview();
 </script>
 </body>
 </html>
