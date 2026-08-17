@@ -460,9 +460,8 @@ function doRead(){
     for (var i = 0; i < d.values.length; i++){
       var addr = p.addr + i;
       var v = d.values[i];
-      var vshow = (p.fc === 1 || p.fc === 2) ? (v ? '1' : '0')
-                 : ('0x' + ('0000' + v.toString(16).toUpperCase()).slice(-4) + ' (' + v + ')');
-      rows += '<tr><td class="num">0x' + ('0000' + addr.toString(16).toUpperCase()).slice(-4) + '</td>'
+      var vshow = (p.fc === 1 || p.fc === 2) ? (v ? '1' : '0') : String(v);
+      rows += '<tr><td class="num">' + i + ' (0x' + ('0000' + addr.toString(16).toUpperCase()).slice(-4) + ')</td>'
             + '<td class="num">' + vshow + '</td><td>' + desc(i, addr, v) + '</td></tr>';
     }
     $('readRows').innerHTML = rows;
