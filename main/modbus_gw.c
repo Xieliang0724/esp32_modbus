@@ -470,22 +470,42 @@ static esp_err_t gw_start(const gw_config_t *cfg)
         tls_init();
     }
 
-    s_running = true;
-
+    /* 分配监听任务参数：明文失败=硬失败（返回错误），TLS 失败=降级（仅告警） */
     listener_arg_t *la = malloc(sizeof(listener_arg_t));
-    if (la) {
-        la->port = s_cfg.port;
-        la->tls = false;
-        la->idx = 0;
-        xTaskCreate(tcp_listener_task, "mb_tcp_listen", 4096, la, 5, &s_listener_tasks[0]);
+    if (!la) {
+        ESP_LOGE(TAG, "listener arg malloc failed");
+        return ESP_ERR_NO_MEM;
     }
+    la->port = s_cfg.port;
+    la->tls = false;
+    la->idx = 0;
+
+    listener_arg_t *la2 = NULL;
     if (s_cfg.tls_enabled && s_tls_ready) {
-        listener_arg_t *la2 = malloc(sizeof(listener_arg_t));
+        la2 = malloc(sizeof(listener_arg_t));
         if (la2) {
             la2->port = s_cfg.tls_port;
             la2->tls = true;
             la2->idx = 1;
-            xTaskCreate(tcp_listener_task, "mb_tls_listen", 4096, la2, 5, &s_listener_tasks[1]);
+        } else {
+            ESP_LOGW(TAG, "TLS listener arg malloc failed, TLS disabled");
+        }
+    }
+
+    s_running = true;
+
+    if (xTaskCreate(tcp_listener_task, "mb_tcp_listen", 4096, la, 5,
+                    &s_listener_tasks[0]) != pdPASS) {
+        free(la);            /* 任务未创建，la 不会被 free，需手动释放 */
+        s_running = false;
+        ESP_LOGE(TAG, "listen task create failed");
+        return ESP_ERR_NO_MEM;
+    }
+    if (la2) {
+        if (xTaskCreate(tcp_listener_task, "mb_tls_listen", 4096, la2, 5,
+                        &s_listener_tasks[1]) != pdPASS) {
+            free(la2);       /* TLS 监听创建失败不致命，明文照常工作 */
+            ESP_LOGW(TAG, "TLS listen task create failed, TLS disabled");
         }
     }
     ESP_LOGI(TAG, "server started (port %u%s, allowlist=%s)",
