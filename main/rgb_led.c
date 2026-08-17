@@ -1,7 +1,9 @@
 /*
  * rgb_led.c - RGB 状态灯实现（espressif/led_strip 托管组件, RMT 驱动）
- *            急停状态（RGB_STATE_ESTOP）红色闪烁，其余状态常亮。
+ *            急停状态（RGB_STATE_ESTOP）红色闪烁，优先级高于网络状态色。
  */
+#include <stdbool.h>
+
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "led_strip.h"
@@ -15,7 +17,9 @@ static const char *TAG = "rgb_led";
 static led_strip_handle_t s_strip = NULL;
 static esp_timer_handle_t s_blink_timer = NULL;
 static bool s_blink_on = false;
-static rgb_state_t s_current = RGB_STATE_DEFAULT;
+static bool s_estop_active = false;        /* 急停是否激活 */
+static rgb_state_t s_applied = (rgb_state_t)0xFF;   /* 哨兵：未应用任何灯效，保证首次 apply 执行 */
+static rgb_state_t s_base_state = RGB_STATE_DEFAULT;   /* wifi 最后请求的网络色 */
 
 static void set_rgb(uint8_t r, uint8_t g, uint8_t b)
 {
@@ -36,6 +40,52 @@ static void blink_cb(void *arg)
     } else {
         set_rgb(0, 0, 0);            /* 灭 */
     }
+}
+
+/* 停止闪烁（若在运行），灯停在当前相位 */
+static void blink_stop(void)
+{
+    if (s_blink_timer && esp_timer_is_active(s_blink_timer)) {
+        esp_timer_stop(s_blink_timer);
+    }
+}
+
+/* 应用一种灯效：ESTOP 启动闪烁，其他颜色常亮。带去重。 */
+static void apply_state(rgb_state_t st)
+{
+    if (st == s_applied) {
+        return;
+    }
+    if (st != RGB_STATE_ESTOP) {
+        blink_stop();
+    }
+    if (st == RGB_STATE_ESTOP) {
+        s_applied = st;
+        s_blink_on = false;
+        esp_timer_start_periodic(s_blink_timer, ESTOP_BLINK_MS * 1000);
+        ESP_LOGI(TAG, "LED state -> ESTOP (blink red)");
+        return;
+    }
+    s_applied = st;
+    uint8_t r = 0, g = 0, b = 0;
+    switch (st) {
+    case RGB_STATE_DEFAULT:      /* 橙色 */
+        r = 255; g = 100; b = 0;
+        break;
+    case RGB_STATE_AP_CLIENT:    /* 蓝色 */
+        r = 0;   g = 0;   b = 255;
+        break;
+    case RGB_STATE_CONNECTED:    /* 绿色 */
+        r = 0;   g = 255; b = 0;
+        break;
+    default:
+        return;
+    }
+    set_rgb(r, g, b);
+    ESP_LOGI(TAG, "LED state -> %s (%u,%u,%u)",
+             st == RGB_STATE_DEFAULT ? "ORANGE" :
+             st == RGB_STATE_AP_CLIENT ? "BLUE" : "GREEN",
+             r, g, b);
 }
 
 void rgb_led_init(void)
@@ -73,41 +123,23 @@ void rgb_led_init(void)
 
 void rgb_led_set_state(rgb_state_t st)
 {
-    if (!s_strip || st == s_current) {
-        return;
-    }
-
-    /* 退出急停闪烁态时停用定时器 */
-    if (s_blink_timer && esp_timer_is_active(s_blink_timer)) {
-        esp_timer_stop(s_blink_timer);
-    }
-
     if (st == RGB_STATE_ESTOP) {
-        s_current = st;
-        s_blink_on = false;
-        esp_timer_start_periodic(s_blink_timer, ESTOP_BLINK_MS * 1000);
-        ESP_LOGI(TAG, "LED state -> ESTOP (blink red)");
-        return;
+        return;   /* 网络模块不应直接请求急停色 */
     }
+    s_base_state = st;                    /* 记住网络色，急停解除后恢复 */
+    if (s_estop_active) {
+        return;                           /* 急停激活：忽略覆盖 */
+    }
+    apply_state(st);
+}
 
-    s_current = st;
-    uint8_t r = 0, g = 0, b = 0;
-    switch (st) {
-    case RGB_STATE_DEFAULT:      /* 橙色 */
-        r = 255; g = 100; b = 0;
-        break;
-    case RGB_STATE_AP_CLIENT:    /* 蓝色 */
-        r = 0;   g = 0;   b = 255;
-        break;
-    case RGB_STATE_CONNECTED:    /* 绿色 */
-        r = 0;   g = 255; b = 0;
-        break;
-    default:
-        return;
+void rgb_led_set_estop(bool active)
+{
+    if (active) {
+        s_estop_active = true;
+        apply_state(RGB_STATE_ESTOP);
+    } else {
+        s_estop_active = false;
+        apply_state(s_base_state);        /* 恢复网络色 */
     }
-    set_rgb(r, g, b);
-    ESP_LOGI(TAG, "LED state -> %s (%u,%u,%u)",
-             st == RGB_STATE_DEFAULT ? "ORANGE" :
-             st == RGB_STATE_AP_CLIENT ? "BLUE" : "GREEN",
-             r, g, b);
 }
