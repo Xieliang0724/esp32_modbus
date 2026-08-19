@@ -1,19 +1,20 @@
 <div align="center">
 
-# ESP32-C5 Modbus TCP 从站固件
+# ESP32-C5 Modbus 从站固件
 
-**Wi-Fi 配网 · Modbus TCP 从站 · 急停安全回路 · 网页调试工具**
+**Wi-Fi 配网 · Modbus TCP/TLS 从站 · 串口 Modbus RTU · 急停安全回路 · 网页调试工具**
 
-![version](https://img.shields.io/badge/版本-v1.1.1-blue)
+![version](https://img.shields.io/badge/版本-v1.4.0-blue)
 ![chip](https://img.shields.io/badge/芯片-ESP32--C5-brightgreen)
-![protocol](https://img.shields.io/badge/协议-Modbus--TCP-important)
+![protocol](https://img.shields.io/badge/协议-Modbus--TCP%20%2F%20RTU-important)
 ![tls](https://img.shields.io/badge/TLS-502%20%2F%20802-blueviolet)
+![uart](https://img.shields.io/badge/UART1-9600-orange)
 ![idf](https://img.shields.io/badge/ESP--IDF-v6.0.1-yellow)
 ![tool](https://img.shields.io/badge/测试工具-零依赖-9cf)
 
-ESP32-C5 本体作为 **Modbus TCP 从站（Server）**：寄存器直接映射到本机外设
-（DI / DO / 急停锁存 / 复位按钮），支持**明文 502** 与 **TLS 802** 双监听，
-配网页一键启用，自带零依赖网页调试工具。
+ESP32-C5 本体作为 **Modbus 从站**：寄存器直接映射到本机外设
+（DI / DO / 急停锁存 / 复位按钮），**网口（TCP 502 / TLS 802）与串口（UART1 RTU）
+共用同一套寄存器**，配网页一键启用，自带零依赖网页调试工具。
 
 </div>
 
@@ -38,20 +39,21 @@ python3 tools/modbus_tool.py               # 启动调试工具，浏览器自�
 | 能力 | 说明 |
 |---|---|
 | 🎛️ **Modbus TCP 从站** | ESP32 本体响应请求，寄存器直连本机外设，8 个功能码全支持 |
+| 🔌 **Modbus RTU 串口从站** | UART1（GPIO4/5）RTU 协议，可接 TTL 转以太网模组，与 TCP 共用寄存器 |
 | 🔒 **TLS 加密** | 明文 502 + Modbus Security 802 双监听，单向验证 |
-| 🛑 **急停安全回路** | 2 路急停（常闭 NC）+ 锁存 + 复位按钮解除，fail-safe 设计 |
-| 🔌 **DI / DO 外设** | 4 路通用输入 + 4 路输出，GPIO 全部 menuconfig 可配 |
+| 🛑 **急停安全回路** | 2 路急停（常闭 NC）实时状态 + 锁存 + 复位按钮解除，fail-safe 设计 |
+| 🔌 **DI / DO 外设** | 通用输入/输出 + 急停 + 复位，GPIO 全部 menuconfig 可配 |
 | 🌐 **Web 配网** | SoftAP + 网页双频扫描，DHCP / 静态 IP，断网自动兜底 |
 | 🧰 **零依赖调试工具** | 单文件 Python 网页工具，预设本项目寄存器映射 |
 | 💾 **配置持久化** | NVS 存储，断电重启自动重连 |
-| 🚦 **RGB 状态灯** | 板载 WS2812：橙=配网 / 蓝=热点有客户端 / 绿=已联网 |
+| 🚦 **RGB 状态灯** | 板载 WS2812：橙=配网 / 蓝=热点有客户端 / 绿=已联网 / 红闪=急停 |
 
 ## 📋 寄存器映射速览
 
 | 区域 | 地址 | 功能码 | 内容 |
 |---|---|---|---|
 | 线圈 COIL | `0x0000` | 01 / 05 / 0F | DO0–DO3 数字输出 |
-| 离散输入 DI | `0x1000` | 02 | DI0-3 通用输入 · DI4/5 急停实时 · DI6 复位 |
+| 离散输入 DI | `0x1000` | 02 | DI2/3 通用输入 · DI4/5 急停实时 · DI6 复位（DI0/1 让给串口） |
 | 输入寄存器 IR | `0x3000` | 04 | 急停状态 / 急停实时 IO / 复位 / 设备信息 |
 | 保持寄存器 HR | `0x4000` | 03 / 06 / 10 | 用户参数（RAM 暂存） |
 
@@ -73,6 +75,7 @@ python3 tools/modbus_tool.py               # 启动调试工具，浏览器自�
   - [客户端测试示例](#客户端测试示例)
   - [Modbus 测试工具](#🧰-modbus-测试工具网页版maclinux-通用)
   - [Modbus TLS](#modbus-tlsv110-保留自基版本)
+- [串口 Modbus RTU 从站](#🔌-串口-modbus-rtu-从站uart1)
 - [版本管理（git tag）](#版本管理git-tag)
 - [常见问题](#常见问题)
 
@@ -129,8 +132,10 @@ esp32_modbus/
     ├── config_store.[ch]     # NVS 配置持久化
     ├── wifi_mgr.[ch]         # Wi-Fi 状态机（AP/STA/扫描/静态IP/回退）
     ├── modbus_gw.[ch]        # Modbus TCP 从站（Server）：TCP/TLS 监听、MBAP 组帧
+    ├── modbus_rtu.[ch]       # Modbus RTU 串口从站：UART1 帧解析/CRC16/响应
     ├── mb_device.[ch]        # 从站设备模型：寄存器映射 + 功能码 + DI/DO/急停 GPIO
-    ├── rgb_led.[ch]          # RGB 状态灯（GPIO27 WS2812）
+    ├── uart_io.[ch]          # 通用串口 UART1（GPIO4 TX / GPIO5 RX）收发
+    ├── rgb_led.[ch]          # RGB 状态灯（GPIO27 WS2812，含急停红闪）
     ├── web_server.[ch]       # HTTP 配网服务器（REST API）
     └── www/index.html        # 内嵌配网网页（EMBED_FILES）
 ```
@@ -184,10 +189,15 @@ idf.py -p /dev/cu.usbmodem* flash monitor      # macOS 串口设备名
 | `CONFIG_PROV_STA_TIMEOUT_MS` | 15000 | 单次连接超时（毫秒） |
 | `CONFIG_PROV_RESET_GPIO` | 9 | 复位配网按键 GPIO（-1 禁用） |
 | `CONFIG_ESPTOOLPY_FLASHSIZE_8MB` | y | 闪存 8MB（实测 N8R4；N4 板改 4MB） |
-| `CONFIG_MB_DI_GPIO_0~3` | 4/5/6/7 | 通用输入 GPIO（-1 禁用该路） |
+| `CONFIG_MB_DI_GPIO_0~3` | -1/-1/6/7 | 通用输入 GPIO（默认 -1/-1：GPIO4/5 让给 UART1；-1 禁用该路） |
 | `CONFIG_MB_DO_GPIO_0~3` | 23/24/25/26 | 数字输出 GPIO（-1 禁用该路） |
 | `CONFIG_MB_ESTOP1/2_GPIO` | 8 / 10 | 急停1/急停2 GPIO（-1 禁用，恒为正常） |
 | `CONFIG_MB_RESET_BTN_GPIO` | 15 | 复位按钮 GPIO（-1 禁用，急停只能断电解除） |
+| `CONFIG_UART_IO_TX/RX_GPIO` | 4 / 5 | UART1 串口 TX/RX（9600 8N1） |
+| `CONFIG_UART_IO_BAUD` | 9600 | UART1 波特率 |
+| `CONFIG_MB_RTU_ENABLED` | y | UART1 上启用 Modbus RTU 从站 |
+| `CONFIG_MB_RTU_ADDR` | 1 | RTU 从站地址（0=广播不响应） |
+| `CONFIG_UART_TEST_SEND_EN` | n | UART1 每秒测试发送（默认关，接模组前保持关闭） |
 
 ## REST API
 
@@ -209,7 +219,7 @@ idf.py -p /dev/cu.usbmodem* flash monitor      # macOS 串口设备名
 | 区域 | 功能码 | 地址 | 数量 | 映射 |
 |---|---|---|---|---|
 | 线圈 COIL | 01/05/0F | 0x0000–0x0003 | 4 | DO0–DO3（GPIO 数字输出，上电默认断开） |
-| 离散输入 DI | 02 | 0x1000–0x1006 | 7 | DI0-3 通用输入 / DI4-5 急停 / DI6 复位（见下表） |
+| 离散输入 DI | 02 | 0x1000–0x1006 | 7 | DI0/1 禁用（GPIO 让给 UART1）/ DI2-3 通用 / DI4-5 急停 / DI6 复位（见下表） |
 | 输入寄存器 IR | 04 | 0x3000–0x3007 | 8 | 急停状态 / 急停实时 IO / 复位 / 设备信息（见下表） |
 | 保持寄存器 HR | 03/06/10 | 0x4000–0x4003 | 4 | 用户参数（RAM 暂存，掉电清零） |
 
@@ -219,7 +229,7 @@ idf.py -p /dev/cu.usbmodem* flash monitor      # macOS 串口设备名
 
 | 地址 | 通道 | 语义 |
 |---|---|---|
-| 0x1000–0x1003 | DI0–DI3 | 通用数字输入（GPIO，内部上拉，实时电平） |
+| 0x1000–0x1003 | DI0–DI3 | 通用数字输入（GPIO，内部上拉，实时电平；**默认仅 DI2/3 启用**，DI0/1 的 GPIO4/5 让给 UART1 串口，可在 menuconfig 改回） |
 | 0x1004 | DI4 | **急停1 实时 IO 状态**（1=触点闭合，0=按下/断开，随按键实时变化） |
 | 0x1005 | DI5 | **急停2 实时 IO 状态**（同上） |
 | 0x1006 | DI6 | **复位按钮**（常开 NO：按下=1） |
@@ -327,9 +337,39 @@ openssl req -x509 -newkey rsa:2048 -keyout server_key.pem -out server_cert.pem \
   -addext "subjectAltName=DNS:esp32c5.local,IP:192.168.4.1"
 ```
 
+## 🔌 串口 Modbus RTU 从站（UART1）
+
+ESP32 在 **UART1（GPIO4 TX / GPIO5 RX，9600 8N1）** 上同时提供 **Modbus RTU 从站**，
+与 TCP 从站**共用同一套寄存器模型**（读写同一份数据），默认从站地址 **1**
+（`CONFIG_MB_RTU_ADDR`）。外部主站可直接经串口访问，也可经 **TTL 转以太网模组**
+（内置 Modbus TCP↔RTU 转换）从网络侧访问：
+
+```
+Modbus 主站 ──TCP──▶ TTL 转以太网模组 ──RTU──▶ UART1 (GPIO4/5) ──▶ 本机寄存器
+```
+
+**接线**（3 根线，TX/RX 交叉、共地）：
+
+| ESP32 | 模组/设备 |
+|---|---|
+| GPIO4 (IO4) | → RX |
+| GPIO5 (IO5) | ← TX |
+| GND | GND |
+
+**串口测试帧**（9600 8N1，RTU 从站地址 1，CRC 低字节在前）：
+
+```
+01 04 30 00 00 04 FE C9     ← 读急停状态 + 设备信息（应回 9 字节）
+01 05 00 00 FF 00 8C 3A     ← 写 DO0 = ON
+01 02 10 00 00 07 3D 08     ← 读全部 7 路离散输入（DI0-6）
+```
+
+> ⚠️ 接入模组前请确认 `CONFIG_UART_TEST_SEND_EN` 保持关闭（默认已关），
+> 否则周期性测试数据会干扰 Modbus 帧。
+
 ## 版本管理（git tag）
 
-当前版本 **v1.1.1** 已打标签，固件内置版本号（网页状态面板 / `/api/status` / 串口日志 `App version:` 均可查看）。
+当前版本 **v1.4.0** 已打标签，固件内置版本号（网页状态面板 / `/api/status` / 串口日志 `App version:` 均可查看）。
 
 **发布新版本**（改完代码后）：
 

@@ -8,6 +8,30 @@
 
 > 📌 本工程由 **esp32c5_web_provision v1.2.0** 全量复制新建，版本号重新从 **v1.0.0** 计数。v1.1.0 起从"RTU↔TCP 网关"升级为"ESP32 本体 Modbus TCP 从站"。下方 v1.0.0~v1.2.0 记录为基版本（esp32c5_web_provision）的既有历史，保留备查。
 
+## [v1.4.0] - 2026-08-18
+
+### ✨ 新增：串口 UART1 + Modbus RTU 从站
+
+- **UART1 通用串口**（`uart_io.[ch]`）：GPIO4 TX / GPIO5 RX，9600 8N1（menuconfig 可配），提供发送 API + 接收回调
+- **Modbus RTU 从站**（`modbus_rtu.[ch]`）：UART1 上的 RTU 协议（地址匹配 + CRC16 低字节在前 + 响应组帧），**与 TCP 从站共用同一套寄存器模型**（mb_device），支持同时访问
+- **典型应用**：外接 TTL 转以太网模组（内置 Modbus TCP↔RTU 转换），网络侧经模组读写本机寄存器
+- 从站地址 `CONFIG_MB_RTU_ADDR`（默认 1），`CONFIG_MB_RTU_ENABLED` 开关
+- **引脚调整**：DI0/DI1 默认改为 -1（GPIO4/5 让给 UART1），DI2/3（GPIO6/7）保留
+- 每秒测试发送改为 Kconfig 开关（`CONFIG_UART_TEST_SEND_EN`，**默认关闭**，避免干扰 Modbus）
+- **修复**：mb_device.h 缺 `esp_err.h` 包含导致编译失败
+
+### 🔧 修复：急停 LED 状态机
+
+- 修复初始化灯灭（`s_applied` 默认值恰为 DEFAULT 导致首次设置被去重跳过）
+- 急停优先级收进 rgb_led 内部（新增 `rgb_led_set_estop()`），wifi 事件不再覆盖红闪
+- 急停解除自动恢复网络色
+
+### 🧰 调试工具改进
+
+- 地址输入支持**相对地址自动补全**（按功能码加区域前缀：01→0x0000、02→0x1000、04→0x3000、03/06/10→0x4000），兼容 0x 绝对地址
+- 结果表格地址/值改**十进制**显示（地址列：相对地址 + 实际十六进制）
+- 预设与寄存器语义标注同步更新
+
 ## [v1.3.1] - 2026-08-17
 
 ### 🔧 修正：DI4/DI5 改为实时急停 IO 状态（不锁存）
