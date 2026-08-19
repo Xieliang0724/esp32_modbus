@@ -7,6 +7,7 @@ idf_component_register(
         "rgb_led.c"
         "modbus_gw.c"
         "mb_device.c"
+        "uart_io.c"
     INCLUDE_DIRS "."
     EMBED_FILES
         "www/index.html"
@@ -22,6 +23,7 @@ idf_component_register(
         esp_timer
         driver
         esp_driver_gpio
+        esp_driver_uart
         esp_system
         esp_app_format
         led_strip

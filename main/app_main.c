@@ -23,6 +23,7 @@
 #include "modbus_gw.h"
 #include "mb_device.h"
 #include "rgb_led.h"
+#include "uart_io.h"
 #include "web_server.h"
 #include "wifi_mgr.h"
 
@@ -142,6 +143,11 @@ void app_main(void)
         ESP_LOGE(TAG, "mb device init failed: %s", esp_err_to_name(ret));
     }
     modbus_gw_init();
+
+    ret = uart_io_init();       /* 通用串口 UART1（TX=GPIO4 / RX=GPIO5） */
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "uart_io init failed: %s", esp_err_to_name(ret));
+    }
 
 #if CONFIG_PROV_LED_GPIO >= 0
     rgb_led_init();

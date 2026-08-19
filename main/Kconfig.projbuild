@@ -57,18 +57,22 @@ menu "Modbus Slave Configuration"
 
     config MB_DI_GPIO_0
         int "DI0 GPIO (Modbus 离散输入 0x1000)"
-        default 4
+        default -1
         range -1 28
         help
             数字输入 0 的 GPIO，-1 = 未使用（对应寄存器恒为 0）。
+            默认 -1：GPIO4 已被 UART1 TX 占用（见 UART IO Configuration）。
             本开发板（排针 32 脚）建议避开：
             GPIO9（BOOT 键）、11/12（串口 U0TXD/RXD）、13/14（USB_D-/D+）、
             27（RGB）、28（下载模式 strapping）；IO16-22 未引出排针不可用。
 
     config MB_DI_GPIO_1
         int "DI1 GPIO (Modbus 离散输入 0x1001)"
-        default 5
+        default -1
         range -1 28
+        help
+            数字输入 1 的 GPIO，-1 = 未使用（对应寄存器恒为 0）。
+            默认 -1：GPIO5 已被 UART1 RX 占用（见 UART IO Configuration）。
 
     config MB_DI_GPIO_2
         int "DI2 GPIO (Modbus 离散输入 0x1002)"
@@ -129,5 +133,30 @@ menu "Modbus Slave Configuration"
             复位按钮输入 GPIO（常开 NO 触点，一端接 GND，内部上拉）。
             按下=寄存器 1；其按下上升沿用于解除急停锁存。设为 -1 禁用（恒为 0，
             且急停锁存只能断电重启解除）。
+
+endmenu
+
+menu "UART IO Configuration"
+
+    config UART_IO_TX_GPIO
+        int "UART1 TX GPIO"
+        default 4
+        range -1 28
+        help
+            通用串口发送脚。占用后对应 DI/DO 引脚需设为 -1 避免冲突。
+
+    config UART_IO_RX_GPIO
+        int "UART1 RX GPIO"
+        default 5
+        range -1 28
+        help
+            通用串口接收脚。占用后对应 DI/DO 引脚需设为 -1 避免冲突。
+
+    config UART_IO_BAUD
+        int "UART1 baud rate"
+        default 9600
+        range 300 2000000
+        help
+            串口波特率，默认 9600 8N1。
 
 endmenu
