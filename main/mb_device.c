@@ -248,7 +248,7 @@ static void read_bits(uint8_t fc, uint16_t base_idx, uint16_t region_size,
     }
     uint16_t addr = (uint16_t)((pdu[1] << 8) | pdu[2]);
     uint16_t qty  = (uint16_t)((pdu[3] << 8) | pdu[4]);
-    if (qty < 1 || qty > 2000 || addr < base_idx || (uint16_t)(addr - base_idx) + qty > region_size) {
+    if (qty < 1 || qty > 2000 || addr < base_idx || addr > (base_idx + region_size - qty)) {
         exception(fc, MB_EX_ILLEGAL_ADDRESS, resp, resp_len);
         return;
     }
@@ -284,7 +284,7 @@ static void read_words(uint8_t fc, uint16_t base_idx, const uint8_t *pdu,
     uint16_t addr = (uint16_t)((pdu[1] << 8) | pdu[2]);
     uint16_t qty  = (uint16_t)((pdu[3] << 8) | pdu[4]);
     uint16_t total = (fc == 0x03) ? MB_MAX_HOLD : MB_MAX_INREG;
-    if (qty < 1 || qty > 125 || addr < base_idx || (uint16_t)(addr - base_idx) + qty > total) {
+    if (qty < 1 || qty > 125 || addr < base_idx || addr > (base_idx + total - qty)) {
         exception(fc, MB_EX_ILLEGAL_ADDRESS, resp, resp_len);
         return;
     }
@@ -369,8 +369,7 @@ static void write_multi_coils(uint8_t fc, const uint8_t *pdu, size_t pdu_len,
     uint16_t addr = (uint16_t)((pdu[1] << 8) | pdu[2]);
     uint16_t qty  = (uint16_t)((pdu[3] << 8) | pdu[4]);
     uint8_t byte_cnt = pdu[5];
-    if (qty < 1 || qty > 2000 || addr < MB_COIL_BASE ||
-        (uint16_t)(addr - MB_COIL_BASE) + qty > MB_MAX_DO) {
+    if (qty < 1 || qty > 2000 || addr > (MB_MAX_DO - qty)) {
         exception(fc, MB_EX_ILLEGAL_ADDRESS, resp, resp_len);
         return;
     }
@@ -407,7 +406,7 @@ static void write_multi_regs(uint8_t fc, const uint8_t *pdu, size_t pdu_len,
     uint16_t qty  = (uint16_t)((pdu[3] << 8) | pdu[4]);
     uint8_t byte_cnt = pdu[5];
     if (qty < 1 || qty > 125 || addr < MB_HOLDREG_BASE ||
-        (uint16_t)(addr - MB_HOLDREG_BASE) + qty > MB_MAX_HOLD) {
+        addr > (MB_HOLDREG_BASE + MB_MAX_HOLD - qty)) {
         exception(fc, MB_EX_ILLEGAL_ADDRESS, resp, resp_len);
         return;
     }
