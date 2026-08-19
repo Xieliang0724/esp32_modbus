@@ -175,9 +175,9 @@ menu "UART IO Configuration"
 
     config UART_TEST_SEND_EN
         bool "UART1 periodic test send (geekplus every 1s)"
-        default y
+        default n
         help
-            每 1 秒经 UART1 发送一次 "geekplus\r\n" 用于验证发送链路。
-            接入 Modbus 设备/模组前请关闭，否则会干扰 Modbus 通信。
+            每 1 秒经 UART1 发送一次 "geekplus\r\n" 用于验证发送链路（默认关闭）。
+            接入 Modbus 设备/模组前必须保持关闭，否则会干扰 Modbus 通信。
 
 endmenu

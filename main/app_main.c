@@ -146,7 +146,8 @@ static void uart_rx_log_cb(const uint8_t *data, size_t len)
 }
 #endif /* !CONFIG_MB_RTU_ENABLED */
 
-/* UART1 每秒发送测试：周期发出 "geekplus"（验证发送通道） */
+/* UART1 每秒发送测试：周期发出测试字符串（验证发送通道，默认关闭） */
+#if CONFIG_UART_TEST_SEND_EN
 static void uart_send_test_task(void *arg)
 {
     static const char msg[] = "xieliang takes test！ \r\n";
@@ -155,6 +156,7 @@ static void uart_send_test_task(void *arg)
         uart_io_send((const uint8_t *)msg, sizeof(msg) - 1);
     }
 }
+#endif /* CONFIG_UART_TEST_SEND_EN */
 
 void app_main(void)
 {
