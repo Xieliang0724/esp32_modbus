@@ -21,6 +21,7 @@
 
 #include "config_store.h"
 #include "modbus_gw.h"
+#include "modbus_rtu.h"
 #include "mb_device.h"
 #include "rgb_led.h"
 #include "uart_io.h"
@@ -120,7 +121,8 @@ static void init_mdns(void)
     ESP_LOGI(TAG, "mDNS ready: http://esp32c5.local");
 }
 
-/* UART1 接收回调：打印收到的数据（调试用，后续可替换为业务处理） */
+/* UART1 接收回调：打印收到的数据（RTU 从站未启用时的调试用） */
+#if !CONFIG_MB_RTU_ENABLED
 static void uart_rx_log_cb(const uint8_t *data, size_t len)
 {
     /* 文本内容直接打印；含控制字符时退化为十六进制 */
@@ -142,11 +144,12 @@ static void uart_rx_log_cb(const uint8_t *data, size_t len)
         ESP_LOGI(TAG, "UART1 recv %uB: %s%s", len, hex, len > show ? "..." : "");
     }
 }
+#endif /* !CONFIG_MB_RTU_ENABLED */
 
 /* UART1 每秒发送测试：周期发出 "geekplus"（验证发送通道） */
 static void uart_send_test_task(void *arg)
 {
-    static const char msg[] = "geekplus\r\n";
+    static const char msg[] = "xieliang takes test！ \r\n";
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(1000));
         uart_io_send((const uint8_t *)msg, sizeof(msg) - 1);
@@ -181,9 +184,15 @@ void app_main(void)
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "uart_io init failed: %s", esp_err_to_name(ret));
     } else {
-        uart_io_set_rx_cb(uart_rx_log_cb);   /* 接收数据打印到控制台 */
+#if CONFIG_MB_RTU_ENABLED
+        modbus_rtu_init();      /* UART1 上的 Modbus RTU 从站（接管接收） */
+#else
+        uart_io_set_rx_cb(uart_rx_log_cb);   /* 调试：接收数据打印到控制台 */
+#endif
+#if CONFIG_UART_TEST_SEND_EN
         xTaskCreate(uart_send_test_task, "uart_send_test", 2048, NULL, 3, NULL);
         ESP_LOGI(TAG, "UART1 send test started: every 1s -> geekplus");
+#endif
     }
 
 #if CONFIG_PROV_LED_GPIO >= 0

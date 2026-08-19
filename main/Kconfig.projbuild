@@ -159,4 +159,25 @@ menu "UART IO Configuration"
         help
             串口波特率，默认 9600 8N1。
 
+    config MB_RTU_ENABLED
+        bool "Modbus RTU slave on UART1"
+        default y
+        help
+            在 UART1 上启用 Modbus RTU 从站，外部主站（或 TTL 转以太网模组）
+            可经串口读写本机 Modbus 寄存器，与 TCP 从站共用同一套寄存器。
+
+    config MB_RTU_ADDR
+        int "Modbus RTU slave address"
+        default 1
+        range 0 247
+        help
+            RTU 从站地址（默认 1）。0 为广播地址（接收但不响应）。
+
+    config UART_TEST_SEND_EN
+        bool "UART1 periodic test send (geekplus every 1s)"
+        default y
+        help
+            每 1 秒经 UART1 发送一次 "geekplus\r\n" 用于验证发送链路。
+            接入 Modbus 设备/模组前请关闭，否则会干扰 Modbus 通信。
+
 endmenu

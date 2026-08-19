@@ -49,6 +49,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "esp_err.h"
+
 /* 寄存器区域基地址（地址为 0 起始，Modbus 协议线上加 1 表示） */
 #define MB_COIL_BASE     0x0000   /* 线圈：DO0-DO3 */
 #define MB_DI_BASE       0x1000   /* 离散输入：DI0-DI7 */

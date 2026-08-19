@@ -7,6 +7,7 @@ idf_component_register(
         "rgb_led.c"
         "modbus_gw.c"
         "mb_device.c"
+        "modbus_rtu.c"
         "uart_io.c"
     INCLUDE_DIRS "."
     EMBED_FILES
