@@ -112,25 +112,52 @@ static bool reset_btn_pressed(void)
  *   - 急停按下（触点断开）→ 立即锁存（寄存器 0）
  *   - 急停松开后，检测到复位按钮上升沿 → 解除锁存（寄存器 1）
  * 复位沿为全局事件：一次按下同时解除所有已松开急停的锁存。
+ * 边沿日志：综合状态在"正常↔触发"切换时各打一次日志（mutex 外）。
  * 返回综合状态：true = 任一路急停锁存中（触发）。 */
 static bool estop_latch_update(void)
 {
-    bool active = false;
+    bool active_now = false;
+    bool active_prev = false;
+    bool triggered_now = false;   /* 本轮新锁存的某一路 */
+    int  reset_channel = -1;       /* 因复位解除的通道（-1 = 无） */
+
     xSemaphoreTake(s_reg_mutex, portMAX_DELAY);
+    for (int i = 0; i < MB_ESTOP_COUNT; i++) {
+        active_prev |= s_estop_latched[i];
+    }
+
     bool reset = reset_btn_pressed();
     bool reset_edge = reset && !s_reset_prev;
     s_reset_prev = reset;
 
     for (int i = 0; i < MB_ESTOP_COUNT; i++) {
         if (!estop_contact_ok((uint8_t)i)) {
+            if (!s_estop_latched[i]) {
+                triggered_now = true;          /* 本轮新触发 */
+            }
             s_estop_latched[i] = true;             /* 急停触发，锁存 */
-        } else if (reset_edge) {
+        } else if (reset_edge && s_estop_latched[i]) {
             s_estop_latched[i] = false;            /* 松开 + 复位按下，解除 */
+            reset_channel = i;
         }
-        active |= s_estop_latched[i];
+        active_now |= s_estop_latched[i];
     }
     xSemaphoreGive(s_reg_mutex);
-    return active;
+
+    /* 边沿日志（mutex 外） */
+    if (triggered_now) {
+        ESP_LOGW(TAG, "ESTOP TRIGGERED (latched, reg 0x3000 -> 0)");
+    } else if (!active_prev && active_now) {
+        /* 兜底：理论上应该都被 triggered_now 捕获，但写在这里保险 */
+        ESP_LOGW(TAG, "ESTOP TRIGGERED (latched, reg 0x3000 -> 0)");
+    }
+    if (active_prev && !active_now) {
+        ESP_LOGI(TAG, "ESTOP RESET (reg 0x3000 -> 1, reset button released latches)");
+    } else if (reset_edge && reset_channel >= 0) {
+        ESP_LOGD(TAG, "reset button edge: latches cleared");
+    }
+
+    return active_now;
 }
 
 /* 对外：设备急停综合状态（含锁存更新），供 LED 等模块轮询 */
