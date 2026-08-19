@@ -120,6 +120,39 @@ static void init_mdns(void)
     ESP_LOGI(TAG, "mDNS ready: http://esp32c5.local");
 }
 
+/* UART1 接收回调：打印收到的数据（调试用，后续可替换为业务处理） */
+static void uart_rx_log_cb(const uint8_t *data, size_t len)
+{
+    /* 文本内容直接打印；含控制字符时退化为十六进制 */
+    bool printable = true;
+    for (size_t i = 0; i < len; i++) {
+        if (data[i] < 0x20 || data[i] > 0x7E) {
+            printable = false;
+            break;
+        }
+    }
+    if (printable) {
+        ESP_LOGI(TAG, "UART1 recv %uB: %.*s", len, (int)len, (const char *)data);
+    } else {
+        char hex[3 * 64 + 1] = {0};
+        size_t show = len < 64 ? len : 64;
+        for (size_t i = 0; i < show; i++) {
+            snprintf(hex + i * 3, sizeof(hex) - i * 3, "%02X ", data[i]);
+        }
+        ESP_LOGI(TAG, "UART1 recv %uB: %s%s", len, hex, len > show ? "..." : "");
+    }
+}
+
+/* UART1 每秒发送测试：周期发出 "geekplus"（验证发送通道） */
+static void uart_send_test_task(void *arg)
+{
+    static const char msg[] = "geekplus\r\n";
+    while (1) {
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        uart_io_send((const uint8_t *)msg, sizeof(msg) - 1);
+    }
+}
+
 void app_main(void)
 {
     ESP_LOGI(TAG, "ESP32-C5 web provisioning firmware starting");
@@ -147,6 +180,10 @@ void app_main(void)
     ret = uart_io_init();       /* 通用串口 UART1（TX=GPIO4 / RX=GPIO5） */
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "uart_io init failed: %s", esp_err_to_name(ret));
+    } else {
+        uart_io_set_rx_cb(uart_rx_log_cb);   /* 接收数据打印到控制台 */
+        xTaskCreate(uart_send_test_task, "uart_send_test", 2048, NULL, 3, NULL);
+        ESP_LOGI(TAG, "UART1 send test started: every 1s -> geekplus");
     }
 
 #if CONFIG_PROV_LED_GPIO >= 0
