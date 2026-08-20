@@ -4,6 +4,9 @@
  */
 #include <stdbool.h>
 
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "led_strip.h"
@@ -20,20 +23,31 @@ static bool s_blink_on = false;
 static bool s_estop_active = false;        /* 急停是否激活 */
 static rgb_state_t s_applied = (rgb_state_t)0xFF;   /* 哨兵：未应用任何灯效，保证首次 apply 执行 */
 static rgb_state_t s_base_state = RGB_STATE_DEFAULT;   /* wifi 最后请求的网络色 */
+static SemaphoreHandle_t s_rmt_mutex = NULL;   /* 保护 led_strip_refresh 不被并发调用 */
 
 static void set_rgb(uint8_t r, uint8_t g, uint8_t b)
 {
-    if (!s_strip) {
+    if (!s_strip || !s_rmt_mutex) {
         return;
+    }
+    /* RMT 通道同一时刻只能有一次传输：mutex 串行化 blink_cb 与
+     * set_estop(false) 路径的 set_rgb，避免 RMT "channel not in init state"。
+     * 短暂等待：blink_cb 持锁时间约几 ms（一次 WS2812 编码 + 发送）。 */
+    if (xSemaphoreTake(s_rmt_mutex, pdMS_TO_TICKS(50)) != pdTRUE) {
+        return;   /* 拿不到锁说明 RMT 正忙且超时，丢弃这次刷新 */
     }
     led_strip_set_pixel(s_strip, 0, r, g, b);
     led_strip_refresh(s_strip);
+    xSemaphoreGive(s_rmt_mutex);
 }
 
 /* 急停闪烁回调：红/灭交替 */
 static void blink_cb(void *arg)
 {
     (void)arg;
+    if (!s_estop_active) {
+        return;   /* timer stop 异步生效期间的尾事件，已 ESTOP 解除 */
+    }
     s_blink_on = !s_blink_on;
     if (s_blink_on) {
         set_rgb(255, 0, 0);          /* 红 */
@@ -42,7 +56,7 @@ static void blink_cb(void *arg)
     }
 }
 
-/* 停止闪烁（若在运行），灯停在当前相位 */
+/* 停止闪烁（若在运行） */
 static void blink_stop(void)
 {
     if (s_blink_timer && esp_timer_is_active(s_blink_timer)) {
@@ -50,23 +64,28 @@ static void blink_stop(void)
     }
 }
 
-/* 应用一种灯效：ESTOP 启动闪烁，其他颜色常亮。带去重。 */
+/* 应用一种灯效：ESTOP 启动闪烁，其他颜色常亮。
+ * 关键：先无条件 blink_stop，再切灯，最后如需 ESTOP 再 restart timer。
+ * RMT 传输由 s_rmt_mutex 串行化，避免 blink_cb 与 set_rgb 并发导致
+ * "channel not in init state" 错误（错误日志：rmt_tx_enable failed）。 */
 static void apply_state(rgb_state_t st)
 {
-    if (st == s_applied) {
-        return;
-    }
-    if (st != RGB_STATE_ESTOP) {
-        blink_stop();
-    }
     if (st == RGB_STATE_ESTOP) {
-        s_applied = st;
+        blink_stop();
         s_blink_on = false;
+        s_applied = st;
         esp_timer_start_periodic(s_blink_timer, ESTOP_BLINK_MS * 1000);
         ESP_LOGI(TAG, "LED state -> ESTOP (blink red)");
         return;
     }
+
+    if (st == s_applied) {
+        return;
+    }
+    blink_stop();
+    s_blink_on = false;
     s_applied = st;
+
     uint8_t r = 0, g = 0, b = 0;
     switch (st) {
     case RGB_STATE_DEFAULT:      /* 橙色 */
@@ -112,6 +131,11 @@ void rgb_led_init(void)
     ESP_ERROR_CHECK(led_strip_new_rmt_device(&strip_config, &rmt_config, &s_strip));
     led_strip_clear(s_strip);
 
+    /* RMT 互斥锁：保护 led_strip_refresh 并发访问 */
+    if (!s_rmt_mutex) {
+        s_rmt_mutex = xSemaphoreCreateMutex();
+    }
+
     /* 急停闪烁定时器（懒创建，仅 ESTOP 状态启用） */
     esp_timer_create_args_t targs = {
         .callback = blink_cb,
@@ -135,11 +159,16 @@ void rgb_led_set_state(rgb_state_t st)
 
 void rgb_led_set_estop(bool active)
 {
+    if (active == s_estop_active) {
+        return;   /* 状态未变，不刷 */
+    }
+    s_estop_active = active;
     if (active) {
-        s_estop_active = true;
         apply_state(RGB_STATE_ESTOP);
     } else {
-        s_estop_active = false;
-        apply_state(s_base_state);        /* 恢复网络色 */
+        /* apply_state 内部已统一 stop timer + 立即刷目标色，
+         * 消除 blink_cb tail event 与 set_estop 的 race */
+        apply_state(s_base_state);
+        ESP_LOGI(TAG, "ESTOP LED cleared, restore base state");
     }
 }

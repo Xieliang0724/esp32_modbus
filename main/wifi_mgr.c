@@ -45,6 +45,15 @@ static bool s_scanning = false;
 static uint16_t s_scan_max_aps = SCAN_MAX_APS;
 static wifi_mgr_scan_done_cb_t s_scan_done_cb = NULL;
 
+/* 内部事件：将"重"的 wifi 操作（stop/start/set_mode）从 esp_timer 回调
+ * 派发到 default event loop 上执行，避免在 timer 任务上下文里同步阻塞 wifi
+ * 驱动，进而触发嵌套事件回调 / 栈不够。 */
+ESP_EVENT_DEFINE_BASE(WIFI_MGR_INTERNAL);
+enum {
+    WIFI_MGR_EV_ENTER_CONFIG = 0,
+    WIFI_MGR_EV_AP_FALLBACK  = 1,
+};
+
 static char s_sta_ip[STA_IP_STR_LEN] = {0};
 static uint8_t s_ap_clients = 0;   /* 当前连上 SoftAP 的客户端数量 */
 static char s_ap_ssid[33] = {0};   /* 当前 SoftAP SSID */
@@ -63,6 +72,28 @@ static void update_led(void)
 
 static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, void *data);
 static void ip_event_handler(void *arg, esp_event_base_t base, int32_t id, void *data);
+
+/* 内部事件 handler：在 default event loop 任务里执行"重"的 wifi 操作，
+ * 从 esp_timer 回调发到这里，避免 timer 任务上下文重入 wifi 驱动。 */
+static void wifi_mgr_internal_handler(void *arg, esp_event_base_t base, int32_t id, void *data)
+{
+    (void)arg; (void)base; (void)data;
+    switch (id) {
+    case WIFI_MGR_EV_ENTER_CONFIG:
+        if (s_state != WIFI_MGR_STATE_CONFIG) {
+            wifi_mgr_enter_config_mode();
+        }
+        break;
+    case WIFI_MGR_EV_AP_FALLBACK:
+        if (!s_ap_on && s_state != WIFI_MGR_STATE_CONNECTED) {
+            ESP_LOGW(TAG, "STA down too long, enabling fallback AP");
+            wifi_mgr_ap_enable();
+        }
+        break;
+    default:
+        break;
+    }
+}
 
 /* ------------------------------------------------------------------ */
 /* 内部工具                                                             */
@@ -211,7 +242,9 @@ static void on_conn_timeout(void *arg)
     ESP_LOGW(TAG, "connect timeout (%d/%d)", s_retry_count + 1, CONN_RETRY_MAX);
     s_retry_count++;
     if (s_retry_count >= CONN_RETRY_MAX) {
-        wifi_mgr_enter_config_mode();
+        /* wifi_mgr_enter_config_mode 会 esp_wifi_stop/start，不能在 esp_timer
+         * 任务里同步执行 —— 派到 default event loop 上执行 */
+        esp_event_post(WIFI_MGR_INTERNAL, WIFI_MGR_EV_ENTER_CONFIG, NULL, 0, 0);
         return;
     }
     esp_wifi_disconnect();    /* 清理挂起的连接 */
@@ -240,8 +273,9 @@ static void on_ap_fallback_timeout(void *arg)
     if (s_ap_on) {
         return;   /* AP 已开 */
     }
-    ESP_LOGW(TAG, "STA down too long, enabling fallback AP");
-    wifi_mgr_ap_enable();
+    /* wifi_mgr_ap_enable 会 esp_wifi_set_mode，同样派到 event loop 执行，
+     * 避免在 esp_timer 上下文调 wifi 驱动。日志在 handler 内打印。 */
+    esp_event_post(WIFI_MGR_INTERNAL, WIFI_MGR_EV_AP_FALLBACK, NULL, 0, 0);
 }
 
 /* 在 STA 断开且 AP 关闭时，延迟开启 AP 兜底（短暂抖动不触发） */
@@ -307,6 +341,7 @@ esp_err_t wifi_mgr_init(void)
 
     esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL);
     esp_event_handler_register(IP_EVENT, ESP_EVENT_ANY_ID, &ip_event_handler, NULL);
+    esp_event_handler_register(WIFI_MGR_INTERNAL, ESP_EVENT_ANY_ID, &wifi_mgr_internal_handler, NULL);
 
     esp_timer_create_args_t targs = {
         .callback = on_conn_timeout,

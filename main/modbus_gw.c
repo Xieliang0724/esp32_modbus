@@ -131,10 +131,21 @@ static int mb_net_send(int fd, mbedtls_ssl_context *ssl, const uint8_t *buf, siz
 
 static void close_client(int idx)
 {
-    if (idx >= 0 && idx < MAX_TCP_CLIENTS && s_client_fds[idx] >= 0) {
-        close(s_client_fds[idx]);
+    if (idx < 0 || idx >= MAX_TCP_CLIENTS) {
+        return;
+    }
+    /* 用 mutex 做原子 CAS：先摘 fd 再置 -1，再释放 close，
+     * 避免与 gw_stop / 其他路径出现 double close。 */
+    int fd_to_close = -1;
+    xSemaphoreTake(s_slot_mutex, portMAX_DELAY);
+    if (s_client_fds[idx] >= 0) {
+        fd_to_close = s_client_fds[idx];
         s_client_fds[idx] = -1;
         s_client_tasks[idx] = NULL;
+    }
+    xSemaphoreGive(s_slot_mutex);
+    if (fd_to_close >= 0) {
+        close(fd_to_close);
     }
 }
 
@@ -422,12 +433,16 @@ static void gw_stop(void)
             s_listen_fds[i] = -1;
         }
     }
+    /* 客户端 socket 用 shutdown 触发 recv 立即返回，close 由 client task
+     * 自己在 client_done 里 close_client(i) 完成，避免与主任务 double close。
+     * s_slot_mutex 保证读 s_client_fds[i] 与 client task 修改互斥。 */
+    xSemaphoreTake(s_slot_mutex, portMAX_DELAY);
     for (int i = 0; i < MAX_TCP_CLIENTS; i++) {
         if (s_client_fds[i] >= 0) {
-            close(s_client_fds[i]);
-            s_client_fds[i] = -1;
+            shutdown(s_client_fds[i], SHUT_RDWR);
         }
     }
+    xSemaphoreGive(s_slot_mutex);
     /* 任务退出后会自己 vTaskDelete(NULL)，这里只需等待其自然退出，
      * 绝不能再用句柄 vTaskDelete —— 双重删除会破坏 FreeRTOS 任务链表。 */
     vTaskDelay(pdMS_TO_TICKS(1000));
@@ -435,8 +450,13 @@ static void gw_stop(void)
     for (int i = 0; i < MAX_LISTENERS; i++) {
         s_listener_tasks[i] = NULL;
     }
+    /* 兜底：若 client task 未在 1s 内退出（TLS 阻塞等），强制 close 释放 fd。
+     * close_client 内部有 mutex + CAS，与 task 内的 close_client 天然互斥。 */
     for (int i = 0; i < MAX_TCP_CLIENTS; i++) {
-        s_client_tasks[i] = NULL;
+        if (s_client_fds[i] >= 0) {
+            ESP_LOGW(TAG, "client %d did not exit within 1s, force close", i);
+            close_client(i);
+        }
     }
     ESP_LOGI(TAG, "server stopped");
 }

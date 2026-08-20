@@ -8,6 +8,25 @@
 
 > 📌 本工程由 **esp32c5_web_provision v1.2.0** 全量复制新建，版本号重新从 **v1.0.0** 计数。v1.1.0 起从"RTU↔TCP 网关"升级为"ESP32 本体 Modbus TCP 从站"。下方 v1.0.0~v1.2.0 记录为基版本（esp32c5_web_provision）的既有历史，保留备查。
 
+## [v1.5.1] - 2026-08-20
+
+### 🛡️ 健壮性 & 并发缺陷修复
+
+代码审查专项修补，无功能变更，聚焦边界安全与竞态：
+
+- **Modbus 地址边界 uint16 下溢**（`mb_device.c`）：`read_bits` / `read_words` / `write_multi_coils` / `write_multi_regs` 四处 `addr + qty` 上界检查改用 `uint32` 累加，避免 `qty > region_size` 时 `base + region - qty` 在 uint16 下 wraparound 让越界地址通过校验。`write_multi_regs` qty 上限修正为 spec 规定的 123，`write_multi_coils` 修正为 1968
+- **Modbus RTU 响应缓冲区显式上界**（`modbus_rtu.c`）：响应 PDU 长度 > `RTU_FRAME_MAX - 3` (257) 直接丢帧，避免栈越界写；resp 数组尺寸对齐 `RTU_FRAME_MAX`
+- **Modbus TCP 客户端 double-close 竞态**（`modbus_gw.c`）：
+  - `close_client()` 用 `s_slot_mutex` 做 CAS 式关闭（摘 fd → 置 -1 → 释锁 → close），杜绝并发路径重复 close 同一 fd
+  - `gw_stop()` 改用 `shutdown()` 触发 client task 的 `recv()` 返回，`close()` 由 client task 独占；1s 后残留 fd 走 CAS 兜底强制 close
+- **WiFi API 从 esp_timer 上下文重入**（`wifi_mgr.c`）：新增内部事件 `WIFI_MGR_INTERNAL`（`ENTER_CONFIG` / `AP_FALLBACK`），`on_conn_timeout` / `on_ap_fallback_timeout` 里把 `esp_wifi_stop/start/set_mode` 通过 `esp_event_post` 派到 default event loop 上执行，跳出 timer 任务上下文避免嵌套阻塞
+
+### 🚦 RGB LED 状态机稳定性
+
+- 新增 `s_rmt_mutex` 串行化 `led_strip_refresh`，消除 `blink_cb` 与 `set_rgb` 并发导致的 RMT "channel not in init state" 错误
+- `apply_state()` 重排：先无条件 `blink_stop` → 切灯 → 需要时 restart timer，消除 blink tail-event 与 set_estop 的 race
+- ESTOP 边沿去重：`rgb_led_set_estop()` 状态未变时早退，避免重复触发 apply
+
 ## [v1.4.0] - 2026-08-18
 
 ### ✨ 新增：串口 UART1 + Modbus RTU 从站

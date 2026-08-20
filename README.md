@@ -4,7 +4,7 @@
 
 **Wi-Fi 配网 · Modbus TCP/TLS 从站 · 串口 Modbus RTU · 急停安全回路 · 网页调试工具**
 
-![version](https://img.shields.io/badge/版本-v1.4.0-blue)
+![version](https://img.shields.io/badge/版本-v1.5.1-blue)
 ![chip](https://img.shields.io/badge/芯片-ESP32--C5-brightgreen)
 ![protocol](https://img.shields.io/badge/协议-Modbus--TCP%20%2F%20RTU-important)
 ![tls](https://img.shields.io/badge/TLS-502%20%2F%20802-blueviolet)
@@ -369,7 +369,7 @@ Modbus 主站 ──TCP──▶ TTL 转以太网模组 ──RTU──▶ UART1
 
 ## 版本管理（git tag）
 
-当前版本 **v1.4.0** 已打标签，固件内置版本号（网页状态面板 / `/api/status` / 串口日志 `App version:` 均可查看）。
+当前版本 **v1.5.1** 已打标签，固件内置版本号（网页状态面板 / `/api/status` / 串口日志 `App version:` 均可查看）。
 
 **发布新版本**（改完代码后）：
 

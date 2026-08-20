@@ -91,7 +91,15 @@ static void rtu_rx_cb(const uint8_t *data, size_t len)
 
     /* 组 RTU 响应：addr + resp_pdu + crc（CRC 低字节在前） */
     if (resp_pdu_len > 0) {
-        uint8_t resp[2 + RTU_FRAME_MAX];
+        /* resp_pdu_len 上界：resp 数组固定为 3 + RTU_FRAME_MAX，
+         * 但 addr(1) + pdu + crc(2) 需要 pdu <= RTU_FRAME_MAX - 3 = 257
+         * （Modbus PDU spec 最大 253）。超出即丢弃，防止栈越界。 */
+        if (resp_pdu_len > RTU_FRAME_MAX - 3) {
+            ESP_LOGE(TAG, "resp pdu too long: %u, drop", (unsigned)resp_pdu_len);
+            s_frame_len = 0;
+            return;
+        }
+        uint8_t resp[RTU_FRAME_MAX];
         resp[0] = addr;
         memcpy(resp + 1, resp_pdu, resp_pdu_len);
         uint16_t crc = rtu_crc16(resp, 1 + resp_pdu_len);

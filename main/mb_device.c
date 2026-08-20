@@ -275,7 +275,11 @@ static void read_bits(uint8_t fc, uint16_t base_idx, uint16_t region_size,
     }
     uint16_t addr = (uint16_t)((pdu[1] << 8) | pdu[2]);
     uint16_t qty  = (uint16_t)((pdu[3] << 8) | pdu[4]);
-    if (qty < 1 || qty > 2000 || addr < base_idx || addr > (base_idx + region_size - qty)) {
+    /* 用 uint32 累加避免 uint16 上溢/下溢：qty > region_size 时
+     * base_idx + region_size - qty 会在 uint16 下 wraparound 变成大数，
+     * 让原本非法的 addr 通过 upper-bound 检查。 */
+    if (qty < 1 || qty > 2000 || addr < base_idx ||
+        (uint32_t)(addr - base_idx) + qty > region_size) {
         exception(fc, MB_EX_ILLEGAL_ADDRESS, resp, resp_len);
         return;
     }
@@ -311,7 +315,8 @@ static void read_words(uint8_t fc, uint16_t base_idx, const uint8_t *pdu,
     uint16_t addr = (uint16_t)((pdu[1] << 8) | pdu[2]);
     uint16_t qty  = (uint16_t)((pdu[3] << 8) | pdu[4]);
     uint16_t total = (fc == 0x03) ? MB_MAX_HOLD : MB_MAX_INREG;
-    if (qty < 1 || qty > 125 || addr < base_idx || addr > (base_idx + total - qty)) {
+    if (qty < 1 || qty > 125 || addr < base_idx ||
+        (uint32_t)(addr - base_idx) + qty > total) {
         exception(fc, MB_EX_ILLEGAL_ADDRESS, resp, resp_len);
         return;
     }
@@ -396,7 +401,10 @@ static void write_multi_coils(uint8_t fc, const uint8_t *pdu, size_t pdu_len,
     uint16_t addr = (uint16_t)((pdu[1] << 8) | pdu[2]);
     uint16_t qty  = (uint16_t)((pdu[3] << 8) | pdu[4]);
     uint8_t byte_cnt = pdu[5];
-    if (qty < 1 || qty > 2000 || addr > (MB_MAX_DO - qty)) {
+    /* MB_COIL_BASE==0，addr 是 uint16 恒 >= 0，故不需要 addr < base 的下界检查
+     * （否则 gcc -Werror=type-limits 会因 "addr < 0 恒假" 报错）。 */
+    if (qty < 1 || qty > 1968 ||
+        (uint32_t)(addr - MB_COIL_BASE) + qty > MB_MAX_DO) {
         exception(fc, MB_EX_ILLEGAL_ADDRESS, resp, resp_len);
         return;
     }
@@ -432,8 +440,8 @@ static void write_multi_regs(uint8_t fc, const uint8_t *pdu, size_t pdu_len,
     uint16_t addr = (uint16_t)((pdu[1] << 8) | pdu[2]);
     uint16_t qty  = (uint16_t)((pdu[3] << 8) | pdu[4]);
     uint8_t byte_cnt = pdu[5];
-    if (qty < 1 || qty > 125 || addr < MB_HOLDREG_BASE ||
-        addr > (MB_HOLDREG_BASE + MB_MAX_HOLD - qty)) {
+    if (qty < 1 || qty > 123 || addr < MB_HOLDREG_BASE ||
+        (uint32_t)(addr - MB_HOLDREG_BASE) + qty > MB_MAX_HOLD) {
         exception(fc, MB_EX_ILLEGAL_ADDRESS, resp, resp_len);
         return;
     }
