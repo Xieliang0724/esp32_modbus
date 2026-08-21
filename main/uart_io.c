@@ -39,14 +39,13 @@ static void uart_rx_task(void *arg)
         }
         switch (evt.type) {
         case UART_DATA: {
-            size_t avail = 0;
-            uart_get_buffered_data_len(UART_IO_NUM, &avail);
-            if (avail > 0) {
-                size_t to_read = avail < UART_RX_BUF_SIZE ? avail : UART_RX_BUF_SIZE;
-                int n = uart_read_bytes(UART_IO_NUM, buf, to_read, 0);
-                if (n > 0 && s_rx_cb) {
-                    s_rx_cb(buf, (size_t)n);
-                }
+            /* 直接用 event.size 读取，避免 uart_get_buffered_data_len
+             * 在某些 IDF 版本下不可靠地返回 0 导致回调不触发。
+             * event.size 是 ISR 在 UART_DATA 事件中报告的实际字节数。 */
+            size_t to_read = evt.size < UART_RX_BUF_SIZE ? evt.size : UART_RX_BUF_SIZE;
+            int n = uart_read_bytes(UART_IO_NUM, buf, to_read, 0);
+            if (n > 0 && s_rx_cb) {
+                s_rx_cb(buf, (size_t)n);
             }
             break;
         }

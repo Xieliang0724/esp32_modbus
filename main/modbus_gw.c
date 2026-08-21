@@ -167,9 +167,13 @@ typedef struct {
 
 static void log_pdu_hex(const char *dir, uint8_t fc, const uint8_t *data, size_t len)
 {
-    /* 只打印首帧摘要，避免刷屏 */
-    char hex[64] = {0};
-    size_t show = len < 28 ? len : 28;
+    /* 只打印首帧摘要，避免刷屏。hex 缓冲按 show_max*3 + 1 分配，
+     * 防止 snprintf 在 i*3 接近 sizeof(hex) 时 size_t 下溢
+     * 绕开长度检查导致栈益处（len≥28 即触发）。 */
+    const size_t show_max = 28;
+    char hex[show_max * 3 + 1];
+    memset(hex, 0, sizeof(hex));
+    size_t show = len < show_max ? len : show_max;
     for (size_t i = 0; i < show; i++) {
         snprintf(hex + i * 3, sizeof(hex) - i * 3, "%02X ", data[i]);
     }

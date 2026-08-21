@@ -73,7 +73,7 @@ static void rtu_rx_cb(const uint8_t *data, size_t len)
     /* 地址匹配（广播不响应） */
     if (addr != CONFIG_MB_RTU_ADDR) {
         if (addr != RTU_BROADCAST) {
-            ESP_LOGD(TAG, "addr %u != %u, ignore", addr, CONFIG_MB_RTU_ADDR);
+            ESP_LOGI(TAG, "addr %u != %u, ignore", addr, CONFIG_MB_RTU_ADDR);
         }
         s_frame_len = 0;
         return;
@@ -85,6 +85,7 @@ static void rtu_rx_cb(const uint8_t *data, size_t len)
     }
 
     /* 复用寄存器模型处理 PDU */
+    ESP_LOGI(TAG, "RTU req addr=%u fc=0x%02X len=%u", addr, pdu[0], (unsigned)pdu_len);
     uint8_t resp_pdu[RTU_FRAME_MAX];
     size_t resp_pdu_len = 0;
     mb_device_handle_pdu(addr, pdu, pdu_len, resp_pdu, &resp_pdu_len);
@@ -106,7 +107,7 @@ static void rtu_rx_cb(const uint8_t *data, size_t len)
         resp[1 + resp_pdu_len] = crc & 0xFF;         /* CRC_L */
         resp[2 + resp_pdu_len] = (crc >> 8) & 0xFF;  /* CRC_H */
         uart_io_send(resp, 3 + resp_pdu_len);
-        ESP_LOGD(TAG, "RTU resp fc=0x%02X len=%u", resp_pdu[0], (unsigned)(3 + resp_pdu_len));
+        ESP_LOGI(TAG, "RTU resp fc=0x%02X len=%u", resp_pdu[0], (unsigned)(3 + resp_pdu_len));
     }
     s_frame_len = 0;
 }
